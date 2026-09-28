@@ -27,6 +27,8 @@ ALLOW = {
     "C:\\Users\\20684\\.dsh",       # 文档里说明凭据位置（不含密钥本身）
     "C:/Users/20684/.dsh",
     "users/20684/.codex",           # 同理
+    "git@github.com",               # SSH 远程地址，不是密钥（邮箱正则的误报）
+    "noreply.github.com",           # 提交用的公开邮箱
     "xmyl-153@",                    # （若有）作者署名
 }
 
