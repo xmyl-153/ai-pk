@@ -1,0 +1,35 @@
+# ---- 运行产物：原始证据可能几百 MB，不进仓库 ----
+# 想分享证据：把某一轮的 runs.jsonl 压成 examples/ 下的小样本，或放 release 附件
+runs/*
+!runs/.gitkeep
+
+# ---- 密钥与本地配置：绝对不要提交 ----
+aipk.config.yaml
+aipk.config.yml
+.env
+*.credentials.yaml
+credentials.json
+
+# ---- 构建产物 ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---- 临时脚本 ----
+_smoketest*
+*.tmp

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-pk"
+version = "0.2.0"
+description = "自己搭的模型/agent 测量台：程序化生成任务 + 代码 oracle + 冻结 harness + 体验指标，附带 18 个测量缺陷的回归测试"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "xmyl-153" }]
+keywords = ["llm", "evaluation", "benchmark", "agent", "harness", "measurement"]
+dependencies = [
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.urls]
+Homepage = "https://github.com/xmyl-153/ai-pk"
+Source = "https://github.com/xmyl-153/ai-pk"
+
+[project.scripts]
+aipk = "aipk.__main__:main"
+
+[tool.setuptools]
+packages = ["aipk", "aipk.tasks"]
+
+[tool.setuptools.package-data]
+aipk = ["../aipk.config.yaml.example"]

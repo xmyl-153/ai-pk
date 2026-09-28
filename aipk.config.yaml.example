@@ -1,0 +1,25 @@
+# AI PK 配置：接你自己的 OpenAI 兼容网关
+#
+#   1. 另存为 aipk.config.yaml（或跑 `python -m aipk init`）
+#   2. 把密钥放进环境变量（不要把密钥写进文件后提交）
+#   3. `python -m aipk list` 确认读到了
+#
+# 没有这个文件时，程序回退到 DSH 的 ~/.dsh/settings.yaml + .credentials.yaml。
+# 只想先跑跑看：`python -m aipk demo`（离线、不需要任何 key）。
+
+providers:
+  mygateway:
+    base_url: https://api.example.com/v1
+    api_key_env: MY_GATEWAY_API_KEY     # 从环境变量读（推荐）
+    display_name: 我的网关
+    # api_key: sk-xxx                   # 也可以直接写死，但别提交到仓库
+
+roster:
+  # [provider_id, model_id, 展示名, tier(flagship|light)]
+  - [mygateway, some-strong-model, "某旗舰模型", flagship]
+  - [mygateway, some-fast-model,   "某轻量模型", light]
+
+run:                # 可选：覆盖默认运行参数
+  qps_per_gateway: 1.2   # 每网关限速，**不限速会被 429 打成假 0 分**
+  workers: 6
+  max_turns: 20
