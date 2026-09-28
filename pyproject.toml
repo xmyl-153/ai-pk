@@ -28,6 +28,3 @@ aipk = "aipk.__main__:main"
 
 [tool.setuptools]
 packages = ["aipk", "aipk.tasks"]
-
-[tool.setuptools.package-data]
-aipk = ["../aipk.config.yaml.example"]

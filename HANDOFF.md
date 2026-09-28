@@ -1,12 +1,26 @@
-# AI PK 项目 · 续接说明（2026-09-27 第二轮 更新）
+# AI PK 项目 · 续接说明（2026-09-28 开源封装 更新）
 
-> 这份文件是**当前状态与下一步**的唯一入口；换人/换 AI/换会话接手，读这一份就够。
+> 这份文件是**维护者视角**的当前状态与下一步；对外文档在 `README.md` 与 `docs/`：
+> `README.md`（门面）· `docs/DESIGN.md`（设计思路）· `docs/FINDINGS.md`（实测结论）·
+> `docs/MEASUREMENT_DEFECTS.md`（18 个缺陷）· `docs/ASSESSMENT.md`（有效性评估 + 同类项目对照）·
+> `docs/DEPLOY.md`（部署）· `CONTRIBUTING.md`（怎么贡献）
 
 ## 一句话现状
 
-**13 个任务族、800+ 次真模型运行、Phase B（真实 CLI harness）跑通、裁判标定+择优+多裁判硬化。**
-剩下的只有"扩样本"和"规模化"。
+**13 个任务族、900+ 次真模型运行、Phase B 跑通、裁判标定 + 多裁判硬化、
+已封装成可开源仓库（首次提交 `187d621`：51 个文件 / 456 KB，无密钥、无 runs）。**
 代码在 `D:\ai\项目文件夹\ai-pk`。
+
+## 开源封装做了什么（2026-09-28）
+
+| 项 | 内容 |
+|---|---|
+| **离线可跑** | `aipk/scripted.py`（满分/错答机器人）+ `python -m aipk demo`：**不需要 API key** 跑通全链路（13 族 → harness → 工具落盘 → 判定 → 报告）。既是门面，也是端到端回归测试（满分机器人必须 100%、错答必须 0%） |
+| **不绑定作者的凭据系统** | `aipk/config.py` 支持 `aipk.config.yaml`（providers + roster，任何 OpenAI 兼容端点），DSH 凭据只作兜底；`python -m aipk init` 生成模板 |
+| **口径集中** | 标准答案构造从 `__main__` 提到 `aipk/oracle.py`，自检与 demo 共用，避免两边漂移（缺陷 #7 就是口径不一致） |
+| **仓库卫生** | `LICENSE`(MIT) · `.gitignore`（排除 runs/、密钥、本地配置）· `.gitattributes`（统一 LF）· `pyproject.toml` · `requirements.txt` · `examples/sample_run.jsonl`（8 条精简证据） |
+| **开源前自检** | `tools/secret_scan.py` 扫密钥/绝对路径/邮箱（已反向验证：塞一个假 key 能被抓到） |
+| **对外文档** | `docs/` 五篇 + `CONTRIBUTING.md`（写清四类最有价值的贡献） |
 
 ## 已完成的实验
 
@@ -163,21 +177,27 @@ python tools\harness_compare.py runs\20260925-201943 runs\<外部那次> ^
 
 ## 未完成 / 下一步（按价值排序）
 
-1. **盲评硬化落地**（`runs/REJUDGE.md` 出来后）：决定委员会策略 ——
-   「宽松：翻转记平局」（人人有分，但和稀泥）还是
-   「严格：任一裁判翻转就丢弃该格」（分数硬，样本变少），并把它写进报告默认口径。
-2. **把 Phase B 扩到同规模**（当前只有 6 组配对）。
-   外部 CLI 单题约 46k token（比冻结 harness 贵约 6 倍），
-   10 模型 × 2 族 × 3 实例 × 3 重复的成本要按这个量级估。
-   若能解决 `reasoning.effort` 被拒的问题（换 CLI 或换支持 Responses 的网关），
-   就能做"同网关同模型"的严格 harness 对照。
-3. **任务 D：规模化** —— 现在 3 实例/族，样本仍小（27 次/模型）。
-   要报更硬的结论需要 ≥10 实例/族：
-   `--tasks-per-family 10 --workers 6 --qps 1.2`（按当前吞吐约数小时）
-4. **继续找有区分度的维度**：正确率三连饱和说明方向要变。
-   已确认**开放式任务是唯一能测出方差的类型**（实质漂移 100% vs 结构化任务 0%），
-   但开放式任务又撞上裁判噪声 —— 所以顺序是：先把裁判噪声压下去（第 1 条），
-   再往开放式任务加题。
+0. **发布到 GitHub（只差网络）**：仓库已初始化并完成首次提交 `187d621`。
+   本机实测 **github.com 不可达**（`git ls-remote` 报 `Connection was reset`；
+   系统代理关闭、无本地代理端口在听）→ 需要先开加速器（Steam++ 之类）或换网络，然后：
+
+   ```bash
+   # 先在 GitHub 上建一个空仓库（不要勾 README/LICENSE），然后：
+   git remote add origin git@github.com:xmyl-153/ai-pk.git   # 或 https://...
+   git branch -M main
+   git push -u origin main
+   ```
+   推送前再跑一次 `python tools/secret_scan.py` 与 `git status`（确认 `runs/`、`aipk.config.yaml` 没被跟踪）。
+   没有 gh CLI，建仓库这一步要在网页上做，或 `winget install GitHub.cli` 后 `gh repo create ai-pk --public --source=. --push`。
+
+1. **盲评硬化落地**（`runs/REJUDGE.md`）：已实测裁判之间平均 Kendall τ = 0.467、
+   实战翻转率 26%，且 glm-5.3/kimi-k3 在长提示下单次判决要几分钟（成本极高）。
+   → 结论方向：**别加裁判**（*Nine Judges, Two Effective Votes* 证明加裁判收益极低），
+   改用**少量人类标注锚点**校准裁判，或换成可验证的代理指标。
+2. **把 Phase B 扩到同规模**（当前只有 6 组配对）。外部 CLI 单题约 46k token（约冻结 harness 的 6 倍）。
+3. **任务 D：规模化** —— 现在 3 实例/族（27 次/模型），要报更硬的结论需要 ≥10 实例/族。
+4. **继续找有区分度的维度**：正确率三连饱和 → 往"成本/行为/开放式质量"走，
+   但开放式质量先解决裁判噪声（第 1 条）。
 
 ## 机制提醒（踩过就别再踩）
 
