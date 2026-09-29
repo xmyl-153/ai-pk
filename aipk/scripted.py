@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import threading
 
 from .oracle import truth_answer
 from .provider import ChatResult, ToolCall, Usage
@@ -29,6 +30,12 @@ class ScriptedProvider:
       - `oracle`：走完整协议（需要改文件的族会先调 run_python 落盘，再 submit）—— 应当 100% 通过
       - `wrong` ：提交一个格式合法但内容错的答案 —— 应当 0% 通过
                   用来验证"判错"这条路径也通，避免出现"永远满分"的假象
+
+    **线程安全**：Runner 对每个 model_key 只建一个 provider 实例，而 run 是多线程跑的，
+    所以"当前是哪道题、走到第几步、第几阶段"必须放在 **thread-local** 里。
+    踩过的坑（缺陷 #19）：一开始用实例属性存这些状态，并发时 A 题的答案会被 B 题取走 ——
+    表现为"满分机器人只过 92.3%"，而且**单线程/低并发时完全看不出来**
+    （是一次 13 题的跑刚好撞上才暴露的）。
     """
 
     def __init__(self, spec=None, mode: str = "oracle"):
@@ -36,23 +43,29 @@ class ScriptedProvider:
         self.spec = spec or ModelSpec("scripted", mode, f"scripted-{mode}", "offline")
         self.mode = mode
         self.calls = 0
-        self._inst: TaskInstance | None = None
-        self._stage = 0
-        self._plan: list[ToolCall] = []
-        self._step = 0
+        self._local = threading.local()
 
     # ---- 与 Provider 对齐的接口 ----
     def close(self) -> None:
         pass
 
     def set_task(self, inst: TaskInstance) -> None:
-        self._inst = inst
-        self._plan = self._build_plan(inst)
-        self._step = 0
-        self._stage = 0
+        self._local.inst = inst
+        self._local.plan = self._build_plan(inst)
+        self._local.step = 0
+        self._local.stage = 0
 
     def note_stage(self, stage: int) -> None:
-        self._stage = stage
+        self._local.stage = stage
+
+    def _state(self) -> tuple[TaskInstance | None, list[ToolCall], int]:
+        return (getattr(self._local, "inst", None),
+                getattr(self._local, "plan", []),
+                getattr(self._local, "step", 0))
+
+    @property
+    def _stage(self) -> int:
+        return getattr(self._local, "stage", 0)
 
     # ---- 计划：先做该做的事，最后 submit ----
     def _build_plan(self, inst: TaskInstance) -> list[ToolCall]:
@@ -93,15 +106,16 @@ class ScriptedProvider:
     def chat(self, messages, tools=None, *, temperature: float = 0.0,
              max_tokens: int = 8192, stream: bool = True, max_retries: int = 3) -> ChatResult:
         self.calls += 1
+        inst, plan, step = self._state()      # 全部取自 thread-local，避免并发串题
         names = {t["function"]["name"] for t in (tools or [])}
         usage = Usage(prompt_tokens=0, completion_tokens=0, reasoning_tokens=0, reported=True)
         # 该族要求的准备工作还没做完 → 先做
-        if self._step < len(self._plan) and "run_python" in names:
-            call = self._plan[self._step]
-            self._step += 1
+        if step < len(plan) and "run_python" in names:
+            call = plan[step]
+            self._local.step = step + 1
             return ChatResult(text="", tool_calls=[call], finish_reason="tool_calls",
                               usage=usage, ttft_ms=1, total_ms=1)
-        answer = self._answer_for(self._inst)
+        answer = self._answer_for(inst)
         if "submit" in names:
             return ChatResult(text="",
                               tool_calls=[ToolCall(id=f"scripted-submit-{self.calls}", name="submit",

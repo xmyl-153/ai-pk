@@ -602,6 +602,66 @@ def test_saturation_formula() -> int:
     return bad
 
 
+def test_scripted_provider_thread_safety() -> int:
+    """离线机器人必须线程安全：并发时不能把 A 题的答案交给 B 题。
+
+    实测事故（缺陷 #19）：ScriptedProvider 把"当前是哪道题"存在实例属性里，
+    而 Runner 对每个模型只建一个实例、多线程共用 → 满分机器人在一次 13 题的跑里
+    只过了 92.3%（有的题拿到了别的题的答案）。
+
+    **这个测试的第一版是无效的**：它只是让 4 个线程各跑一批任务，
+    结果在**有 bug 的旧实现上也是绿的** —— set_task 与 chat 之间窗口太窄，
+    GIL 下几乎撞不上。现在的写法用 barrier 强制"所有线程都 set_task 完，才允许 chat"，
+    把竞态窗口放大成必然事件：旧实现在这里必红，新实现必绿。
+    （教训：测试自己也要被验证 —— 拿坏实现跑一遍，看它会不会红。）
+    """
+    import concurrent.futures as cf
+    import threading
+
+    from aipk.oracle import truth_answer
+    from aipk.scripted import ScriptedProvider
+    from aipk.tasks import all_families, make
+
+    print("\n离线机器人线程安全：")
+    tasks = [make(f, 2026 + i) for i, f in enumerate(all_families())]
+    expected = {t.key: truth_answer(t.family, t) for t in tasks if t.next_stage is None}
+    prov = ScriptedProvider()          # 故意只用一个共享实例（Runner 就是这么做的）
+    lock = threading.Lock()
+    got: dict[str, str] = {}
+
+    for start in range(0, len(tasks), 4):
+        batch = tasks[start:start + 4]
+        if len(batch) < 2:
+            # 单线程跑剩下的，不构成并发，直接过
+            for t in batch:
+                prov.set_task(t)
+                out = prov.chat([{"role": "user", "content": "x"}],
+                                [{"type": "function", "function": {"name": "submit"}}])
+                if out.tool_calls:
+                    got[t.key] = out.tool_calls[0].args.get("answer", "")
+            continue
+        barrier = threading.Barrier(len(batch), timeout=30)
+
+        def run_one(t, _barrier=barrier):
+            prov.set_task(t)
+            _barrier.wait()            # 等所有人都 set_task 完，再一起 chat
+            out = prov.chat([{"role": "user", "content": "x"}],
+                            [{"type": "function", "function": {"name": "submit"}}])
+            if out.tool_calls:
+                with lock:
+                    got[t.key] = out.tool_calls[0].args.get("answer", "")
+
+        with cf.ThreadPoolExecutor(max_workers=len(batch)) as ex:
+            list(ex.map(run_one, batch))
+
+    bad = [k for k, want in expected.items() if got.get(k) != want]
+    for k in bad[:3]:
+        print(f"  [FAIL] {k} 拿到的不是自己的答案：{str(got.get(k))[:40]!r}")
+    print(f"  [{'OK  ' if not bad else 'FAIL'}] 强制并发跑 {len(expected)} 道题 -> "
+          f"{'每题都拿到自己的答案' if not bad else f'{len(bad)} 道串题'}")
+    return len(bad)
+
+
 if __name__ == "__main__":
     b = test_trigger_semantics()
     c = test_cascade_trigger_wellformed()
@@ -614,6 +674,7 @@ if __name__ == "__main__":
     j = test_judge_invalid_is_not_tie()
     k = test_verdict_key_includes_model()
     l = test_saturation_formula()  # noqa: E741
-    total = b + c + d + e + f + gg + h + i + j + k + l
+    m = test_scripted_provider_thread_safety()
+    total = b + c + d + e + f + gg + h + i + j + k + l + m
     print("\n结论：" + ("全部通过" if total == 0 else f"失败 {total} 项"))
     sys.exit(0 if total == 0 else 1)

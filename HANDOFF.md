@@ -20,7 +20,18 @@
 | **口径集中** | 标准答案构造从 `__main__` 提到 `aipk/oracle.py`，自检与 demo 共用，避免两边漂移（缺陷 #7 就是口径不一致） |
 | **仓库卫生** | `LICENSE`(MIT) · `.gitignore`（排除 runs/、密钥、本地配置）· `.gitattributes`（统一 LF）· `pyproject.toml` · `requirements.txt` · `examples/sample_run.jsonl`（8 条精简证据） |
 | **开源前自检** | `tools/secret_scan.py` 扫密钥/绝对路径/邮箱（已反向验证：塞一个假 key 能被抓到） |
+| **CI** | `.github/workflows/gates.yml`：push/PR 自动跑四道门禁（selfcheck / 回归测试 / 离线 demo / 密钥自检），全程不需要 key |
+| **干净 clone 验证** | 把仓库 clone 到别处、从**别的目录**调用：四道门禁全绿，`pip install -e .` 与 `aipk` 控制台脚本可用。这一步抓出了缺陷 #19 |
 | **对外文档** | `docs/` 五篇 + `CONTRIBUTING.md`（写清四类最有价值的贡献） |
+
+### 缺陷 #19（"干净 clone 验证"抓出来的）
+
+离线机器人把"当前是哪道题"存在**实例属性**里，而 Runner 对每个模型只建一个 provider 实例、
+多线程共用 → **A 题的答案被 B 题取走**，满分机器人只过 92.3%。单线程/低并发完全看不出来。
+
+修法：状态改放 `threading.local()` + 并发回归测试；并且**验证了这个测试真的有效**
+（拿旧的坏实现跑：11 题错 7 题；新实现 0 题错）—— 第一版测试在坏代码上也是绿的，等于没测。
+规则写进了 `docs/MEASUREMENT_DEFECTS.md`。
 
 ## 已完成的实验
 
