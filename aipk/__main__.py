@@ -247,6 +247,13 @@ def cmd_demo(args) -> int:
     return 0 if ok else 1
 
 
+def cmd_panel(args) -> int:
+    """打开对战台面板：一个只监听本机的本地网页，拖两个选手进去打一场。"""
+    from .panel import serve
+    serve(port=args.port, open_browser=not args.no_browser)
+    return 0
+
+
 def cmd_init(args) -> int:
     """生成一份配置模板，方便别人接自己的网关。"""
     from .config import USER_CONFIG_NAMES, example_config_text
@@ -292,6 +299,11 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("list", help="列出网关与首战名单").set_defaults(func=cmd_list)
     sub.add_parser("selfcheck", help="任务族自检").set_defaults(func=cmd_selfcheck)
+
+    pn = sub.add_parser("panel", help="打开对战台面板：拖两个选手进去，同一批题各跑一遍")
+    pn.add_argument("--port", type=int, default=8771, help="面板端口（默认 8771，被占用会自动往后找）")
+    pn.add_argument("--no-browser", action="store_true", help="不自动打开浏览器")
+    pn.set_defaults(func=cmd_panel)
 
     dm = sub.add_parser("demo", help="离线跑通全链路（不需要 API key）")
     dm.add_argument("--families", help="逗号分隔的任务族；不传=全部")

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI PK · 对战台</title>
+<link rel="stylesheet" href="/static/panel.css">
+</head>
+<body>
+<div class="veil"></div>
+
+<header class="top">
+  <div class="brand">
+    <span class="logo">PK</span>
+    <div>
+      <h1>AI PK · 对战台</h1>
+      <p class="sub">同一批题，两边各跑一遍 —— 谁更能打，用同一把尺子量。</p>
+    </div>
+  </div>
+  <div class="top-right">
+    <span class="tag">本地运行</span>
+    <span class="tag">不上传任何东西</span>
+    <span class="tag" id="gatewayTag">检查网关中…</span>
+  </div>
+</header>
+
+<main>
+  <!-- 选手池 -->
+  <section class="shelf">
+    <div class="shelf-head">
+      <h2>选手池</h2>
+      <p class="hint">把卡片拖到左边或右边的场地上；不想拖就点一下卡片、再点场地。</p>
+    </div>
+    <div class="pool" id="pool"></div>
+  </section>
+
+  <!-- 对阵盘 -->
+  <section class="arena">
+    <div class="side left" id="sideLeft" data-side="left">
+      <div class="side-head">
+        <span class="dot"></span><span class="side-name">左场</span>
+        <button class="mini" data-act="clear" data-side="left" title="清空">清空</button>
+      </div>
+      <div class="slot" id="slotLeft">
+        <div class="slot-empty">把选手拖到这儿</div>
+        <div class="fighter" hidden>
+          <div class="fighter-name"></div>
+          <div class="fighter-meta"></div>
+        </div>
+      </div>
+      <div class="stats" id="statsLeft" hidden>
+        <div class="big"><span class="num">–</span><span class="unit">%</span><span class="lbl">通过率</span></div>
+        <div class="cells"></div>
+        <div class="rows"></div>
+      </div>
+    </div>
+
+    <div class="center">
+      <div class="vs" id="vs">VS</div>
+      <div class="verdict" id="verdict" hidden></div>
+    </div>
+
+    <div class="side right" id="sideRight" data-side="right">
+      <div class="side-head">
+        <span class="dot"></span><span class="side-name">右场</span>
+        <button class="mini" data-act="clear" data-side="right" title="清空">清空</button>
+      </div>
+      <div class="slot" id="slotRight">
+        <div class="slot-empty">把选手拖到这儿</div>
+        <div class="fighter" hidden>
+          <div class="fighter-name"></div>
+          <div class="fighter-meta"></div>
+        </div>
+      </div>
+      <div class="stats" id="statsRight" hidden>
+        <div class="big"><span class="num">–</span><span class="unit">%</span><span class="lbl">通过率</span></div>
+        <div class="cells"></div>
+        <div class="rows"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 操作条 -->
+  <section class="controls">
+    <label class="pick">题量
+      <select id="scope">
+        <option value="quick" selected>快速（6 类任务，约十几秒）</option>
+        <option value="full">全套（13 类任务，慢一些但更全）</option>
+      </select>
+    </label>
+    <button class="btn ghost" id="btnRandom">随机配一对</button>
+    <button class="btn primary" id="btnFight" disabled>开打</button>
+    <span class="note" id="note"></span>
+  </section>
+
+  <!-- 进度 -->
+  <section class="progress" id="progressBox" hidden>
+    <div class="bar"><i id="barFill"></i></div>
+    <div class="log" id="log"></div>
+  </section>
+
+  <!-- 结果说明 -->
+  <section class="aftermath" id="aftermath" hidden>
+    <h2>这一局怎么回事</h2>
+    <div id="aftermathBody"></div>
+    <p class="fine">口径提醒：结论只对"这一批题 + 这次配置"负责，不代表某个模型整体更强。想更严谨就多跑几轮（命令行 <code>--reps 3</code>）。</p>
+  </section>
+</main>
+
+<footer class="foot">
+  <span>AI PK · 开源模型测量台</span>
+  <span class="sep">·</span>
+  <span>面板只监听 127.0.0.1，密钥不会写到磁盘</span>
+</footer>
+
+<script src="/static/panel.js"></script>
+</body>
+</html>

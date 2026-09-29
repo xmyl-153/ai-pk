@@ -9,18 +9,27 @@
 2. **它同时是端到端回归测试**：满分机器人应当 100% 通过。哪天某个族的 grader
    或 harness 改坏了，`python -m aipk demo` 会立刻掉分 ——
    这比只看 `selfcheck`（只测 grader 单点）覆盖面更大。
+3. **对战台面板拿它当陪练**：面板要有输有赢才看得出门道，所以除了满分/错答，
+   另加"半桶水"（稳定地答错一部分）和"慢吞吞"（答得对但慢）两档。
 
-它不是"模拟模型能力"：只有满分与固定错两种档，用来验证**测量装置**，
+它不是"模拟模型能力"：这几档机器人只用来验证**测量装置**、演示**面板怎么用**，
 不能拿来比较模型（要比模型请配真网关）。
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
+import time
 
 from .oracle import truth_answer
 from .provider import ChatResult, ToolCall, Usage
 from .tasks import TaskInstance
+
+# 每档机器人每次调用"花"多久。真模型当然是真耗时，这里是为了让离线演示的
+# 速度对比看起来像回事（不然全是 1ms，倍数会变成天文数字）。
+# 面板与文档都会写明"离线机器人的延迟是脚本模拟的"。
+MODE_LATENCY = {"oracle": 0.22, "half": 0.30, "slow": 0.95, "wrong": 0.22}
 
 
 class ScriptedProvider:
@@ -30,6 +39,8 @@ class ScriptedProvider:
       - `oracle`：走完整协议（需要改文件的族会先调 run_python 落盘，再 submit）—— 应当 100% 通过
       - `wrong` ：提交一个格式合法但内容错的答案 —— 应当 0% 通过
                   用来验证"判错"这条路径也通，避免出现"永远满分"的假象
+      - `half`  ：按族名稳定地答对约一半（同一批题每次跑结果一致，方便对照）
+      - `slow`  ：答得都对，但每次调用都磨蹭一会儿 —— 用来演示"分数打平、速度差几倍"
 
     **线程安全**：Runner 对每个 model_key 只建一个 provider 实例，而 run 是多线程跑的，
     所以"当前是哪道题、走到第几步、第几阶段"必须放在 **thread-local** 里。
@@ -38,10 +49,11 @@ class ScriptedProvider:
     （是一次 13 题的跑刚好撞上才暴露的）。
     """
 
-    def __init__(self, spec=None, mode: str = "oracle"):
+    def __init__(self, spec=None, mode: str = "oracle", latency_s: float | None = None):
         from .config import ModelSpec
         self.spec = spec or ModelSpec("scripted", mode, f"scripted-{mode}", "offline")
         self.mode = mode
+        self.latency_s = MODE_LATENCY.get(mode, 0.22) if latency_s is None else latency_s
         self.calls = 0
         self._local = threading.local()
 
@@ -51,9 +63,23 @@ class ScriptedProvider:
 
     def set_task(self, inst: TaskInstance) -> None:
         self._local.inst = inst
+        self._local.correct = self._decide_correct(inst)
         self._local.plan = self._build_plan(inst)
         self._local.step = 0
         self._local.stage = 0
+
+    def _decide_correct(self, inst: TaskInstance) -> bool:
+        """这一题它会不会答对（只对有输有赢的档位有意义）。
+
+        `half` 按**族名**决定，不是按运行时随机：同一批题每次跑结果一致，
+        面板上"它在哪几类题上栽了"才说得清。
+        """
+        if self.mode == "wrong":
+            return False
+        if self.mode == "half":
+            h = hashlib.blake2b(inst.family.encode("utf-8"), digest_size=2).digest()
+            return int.from_bytes(h, "big") % 100 < 55
+        return True
 
     def note_stage(self, stage: int) -> None:
         self._local.stage = stage
@@ -70,7 +96,7 @@ class ScriptedProvider:
     # ---- 计划：先做该做的事，最后 submit ----
     def _build_plan(self, inst: TaskInstance) -> list[ToolCall]:
         plan: list[ToolCall] = []
-        if self.mode == "oracle" and inst.family == "mindiff":
+        if getattr(self._local, "correct", True) and inst.family == "mindiff":
             # 最小 diff 族必须**真的改工作目录里的文件**（判定看的是工作区快照）
             good = inst.meta.get("good_rules_py") or ""
             target = inst.meta.get("target") or "app/rules.py"
@@ -84,8 +110,9 @@ class ScriptedProvider:
     def _answer_for(self, inst: TaskInstance) -> str:
         if inst is None:
             return "{}"
-        if self.mode == "wrong":
-            return json.dumps({"answer": None, "note": "scripted-wrong"})
+        if not getattr(self._local, "correct", True):
+            # 答错也要"答得像话"：格式合法、内容不对 —— 这才是判错路径该测的东西
+            return json.dumps({"answer": None, "note": f"scripted-{self.mode}"})
         fam = inst.family
         if inst.next_stage is not None:
             return self._staged_answer(inst)
@@ -106,6 +133,12 @@ class ScriptedProvider:
     def chat(self, messages, tools=None, *, temperature: float = 0.0,
              max_tokens: int = 8192, stream: bool = True, max_retries: int = 3) -> ChatResult:
         self.calls += 1
+        # 磨蹭一下：真模型这里是真实耗时，离线机器人是脚本演的（面板会写明）。
+        # 每次调用的总耗时由 harness 自己按墙钟计，不需要这里造假。
+        if self.latency_s > 0:
+            time.sleep(self.latency_s)
+        ttft = max(1, int(self.latency_s * 1000 * 0.4))
+        spent = max(1, int(self.latency_s * 1000))
         inst, plan, step = self._state()      # 全部取自 thread-local，避免并发串题
         names = {t["function"]["name"] for t in (tools or [])}
         usage = Usage(prompt_tokens=0, completion_tokens=0, reasoning_tokens=0, reported=True)
@@ -114,14 +147,14 @@ class ScriptedProvider:
             call = plan[step]
             self._local.step = step + 1
             return ChatResult(text="", tool_calls=[call], finish_reason="tool_calls",
-                              usage=usage, ttft_ms=1, total_ms=1)
+                              usage=usage, ttft_ms=ttft, total_ms=spent)
         answer = self._answer_for(inst)
         if "submit" in names:
             return ChatResult(text="",
                               tool_calls=[ToolCall(id=f"scripted-submit-{self.calls}", name="submit",
                                                    args={"answer": answer}, raw_args=answer,
                                                    source="native")],
-                              finish_reason="tool_calls", usage=usage, ttft_ms=1, total_ms=1)
+                              finish_reason="tool_calls", usage=usage, ttft_ms=ttft, total_ms=spent)
         # 没有工具协议（tools-off profile）：直接把答案当正文
         return ChatResult(text=answer, tool_calls=[], finish_reason="stop",
-                          usage=usage, ttft_ms=1, total_ms=1)
+                          usage=usage, ttft_ms=ttft, total_ms=spent)

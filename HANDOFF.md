@@ -2,7 +2,7 @@
 
 > 这份文件是**维护者视角**的当前状态与下一步；对外文档在 `README.md` 与 `docs/`：
 > `README.md`（门面）· `docs/DESIGN.md`（设计思路）· `docs/FINDINGS.md`（实测结论）·
-> `docs/MEASUREMENT_DEFECTS.md`（20 个缺陷）· `docs/ASSESSMENT.md`（有效性评估 + 同类项目对照）·
+> `docs/MEASUREMENT_DEFECTS.md`（21 个缺陷）· `docs/ASSESSMENT.md`（有效性评估 + 同类项目对照）·
 > `docs/DEPLOY.md`（部署）· `CONTRIBUTING.md`（怎么贡献）
 
 ## 一句话现状
@@ -10,6 +10,26 @@
 **13 个任务族、900+ 次真模型运行、Phase B 跑通、裁判标定 + 多裁判硬化、
 已封装成可开源仓库（首次提交 `187d621`：51 个文件 / 456 KB，无密钥、无 runs）。**
 代码在 `D:\ai\项目文件夹\ai-pk`。
+
+## 对战台面板（2026-09-29）
+
+把 `runner` 包成了一个本地小网页：`python -m aipk panel`（Windows 双击 `启动对战台.bat`），
+默认 `http://127.0.0.1:8771/`。左边一队、右边一队，同一批题各跑一遍，出比分 + 逐题对错格子 + 判词。
+
+- 后端 `aipk/panel.py`：标准库 `http.server`，只监听 127.0.0.1；三个接口
+  `GET /api/state`（选手池）、`POST /api/pk`（开一局）、`GET /api/pk/<id>`（进度/结果）。
+  进度不另做一套：直接读 `runs/<run_id>/runs.jsonl`（Runner 每完成一次就 flush 一行），
+  所以页面滚出来的日志和落盘的证据是同一份东西。
+- 前端 `aipk/web/`：一个 HTML + 一个 CSS + 一个 JS，壁纸取自作者博客项目的那张画。
+- 离线陪练扩到四档（`aipk/scripted.py`）：满分 / 半桶水（按族名稳定地答对约一半）/
+  慢吞吞（都对但每次磨蹭 ~1s）/ 错答。**它们的延迟是脚本模拟的**，只用来验证装置与演示面板。
+- 跑真模型走同一套 `Runner`，因此记账、限速、基础设施故障排除全部继承。
+
+**面板逼出了缺陷 #21**：`decay` / `longstate` 的实例里存着"这次会话的作答"，
+而 Runner 里两个模型共用同一个实例 → 陪练的答案被写进被测方的会话记录，判词变成
+"满分机器人首答变成 None"。离线机器人不加延迟时两次会话几乎不重叠，所以一直没暴露
+（和 #19 同属并发/共享状态类）。修法：分阶段族每次运行重生成一份实例；
+不变量回归测试 `test_staged_instance_is_not_shared`（先拿旧实现验证过它会红）。
 
 ## CI 与离线门禁（2026-09-29）
 

@@ -139,8 +139,14 @@ class Runner:
             last: RunResult | None = None
             # 基础设施故障（限流/网络）自动重投，最多重试 infra_retries 次
             for _ in range(1 + self.cfg.infra_retries):
+                # 分阶段族的实例里带着"这次会话的答案"（next_stage 的闭包 state）。
+                # 两个模型共用同一个实例，A 的作答会被写进 B 的会话记录里 ——
+                # 表现为"满分的选手忽然首答变成 None"（缺陷 #21，本来就是被离线机器人
+                # 的模拟延迟撞出来的：没延迟时两次运行几乎不重叠，谁都看不出来）。
+                # seed 相同 → 重生成的题目一模一样，只是会话状态各用各的。
+                run_inst = make(inst.family, inst.seed) if inst.next_stage is not None else inst
                 try:
-                    res = harness.run(prov, inst, seed=inst.seed, rep=rep_idx)
+                    res = harness.run(prov, run_inst, seed=inst.seed, rep=rep_idx)
                 except Exception as e:  # noqa: BLE001
                     res = RunResult(model_key=spec.key, task_key=inst.key, profile=self.profile_name,
                                     seed=inst.seed, rep=rep_idx, infra_failure=True,

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-pk"
-version = "0.2.0"
-description = "自己搭的模型/agent 测量台：程序化生成任务 + 代码 oracle + 冻结 harness + 体验指标，附带 18 个测量缺陷的回归测试"
+version = "0.3.0"
+description = "自己搭的模型/agent 测量台：程序化生成任务 + 代码 oracle + 冻结 harness + 体验指标，带一个拖拽对战台面板和 21 个测量缺陷的回归测试"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
@@ -28,3 +28,7 @@ aipk = "aipk.__main__:main"
 
 [tool.setuptools]
 packages = ["aipk", "aipk.tasks"]
+
+# 面板的前端是静态文件，装包时要一起带上（不然 pip 装完打不开面板）
+[tool.setuptools.package-data]
+aipk = ["web/*.html", "web/*.css", "web/*.js", "web/assets/*"]

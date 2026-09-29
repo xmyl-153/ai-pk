@@ -728,6 +728,56 @@ def test_offline_demo_in_clean_env() -> int:
     return 0 if ok else 1
 
 
+def test_staged_instance_is_not_shared() -> int:
+    """分阶段族（decay / longstate）的实例带着"这次会话的答案"，不能被两次运行共用。
+
+    实测事故（缺陷 #21）：脚本里的两个离线机器人共用同一个 decay 实例 ——
+    next_stage 的闭包把两边的作答写进同一个 state["answers"]，
+    于是满分机器人被自己的陪练污染，判词变成"首答变成 None"。
+    以前一直没暴露：两个机器人不带延迟，两次会话几乎不重叠，谁都撞不上
+    （和缺陷 #19 一个道理：并发缺陷在单线程/低并发下是隐形的）。
+
+    这里盯的是**不变量本身**：每次运行都该拿到自己的一份实例（顺带验证满分机器人
+    在有人陪跑的情况下还是 100%）。
+    """
+    import tempfile
+
+    import aipk.runner as R
+    from aipk.config import ModelSpec, RunConfig
+    from aipk.runner import Runner
+
+    print("\n分阶段族实例是否各用各的：")
+    cfg = RunConfig(seed=2026, reps=1, tasks_per_family=1, max_turns=40, max_workers=2,
+                    judge_models=[], out_dir=Path(tempfile.mkdtemp(prefix="aipk-share-")))
+    calls = 0
+    real_make = R.make
+
+    def spy(fam, seed):
+        nonlocal calls
+        calls += 1
+        return real_make(fam, seed)
+
+    R.make = spy                                    # type: ignore[assignment]
+    try:
+        runner = Runner(cfg, verbose=False, gateways={})
+        results, _out = runner.run(
+            models=[ModelSpec("scripted", "oracle", "满分机器人", "offline"),
+                    ModelSpec("scripted", "wrong", "错答机器人", "offline")],
+            families=["decay"], judge_models=[])
+    finally:
+        R.make = real_make                          # type: ignore[assignment]
+
+    mine = [r for r in results if r.model_key == "scripted/oracle"]
+    rate_ok = bool(mine) and all(r.solved for r in mine)
+    inst_ok = calls >= 3        # 1 次建实例 + 2 次运行各重建一份
+    print(f"  [{'OK  ' if inst_ok else 'FAIL'}] 生成任务实例 {calls} 次（期望 ≥3：建 1 次 + 每边各 1 次）")
+    print(f"  [{'OK  ' if rate_ok else 'FAIL'}] 有人陪跑时满分机器人仍然 100%"
+          f"（实际 {sum(1 for r in mine if r.solved)}/{len(mine)}）")
+    if not rate_ok and mine:
+        print(f"        判词：{mine[0].grade.reason if mine[0].grade else '（没有判词）'}")
+    return (0 if inst_ok else 1) + (0 if rate_ok else 1)
+
+
 if __name__ == "__main__":
     b = test_trigger_semantics()
     c = test_cascade_trigger_wellformed()
@@ -743,6 +793,7 @@ if __name__ == "__main__":
     m = test_scripted_provider_thread_safety()
     n = test_judge_strict_policy()
     o = test_offline_demo_in_clean_env()
-    total = b + c + d + e + f + gg + h + i + j + k + l + m + n + o
+    p = test_staged_instance_is_not_shared()
+    total = b + c + d + e + f + gg + h + i + j + k + l + m + n + o + p
     print("\n结论：" + ("全部通过" if total == 0 else f"失败 {total} 项"))
     sys.exit(0 if total == 0 else 1)
