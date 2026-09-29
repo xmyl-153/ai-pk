@@ -53,7 +53,7 @@ python -m aipk demo               # 离线跑通全链路，不需要任何 API 
 
 不限速被网关 429 打成假 0 分（一个模型被误判 5/24）、用字符串比对触发输入（10 个模型全被冤枉）、题目 builder 自己把答案写错导致模型答对被判错、裁判"没判出来"被记成平局（裁判罢工反而白送半分）、多裁判重评的判决键少了模型维度（分数全一样、名次相关性"漂亮"到 1.000）……
 
-这类问题共 19 条，全部留档，每条配一个回归测试 —— 见文末「可靠性与改进记录」。
+这类问题共 20 条，全部留档，每条配一个回归测试 —— 见文末「可靠性与可改进记录」。
 
 ---
 
@@ -62,7 +62,7 @@ python -m aipk demo               # 离线跑通全链路，不需要任何 API 
 1. **能被背下来的题不用** —— 实例运行时程序化生成，答案现场算，seed 可复现
 2. **能用代码判的绝不请裁判** —— 只有开放文本才盲评，且必须交换位置双评 + 报告翻转率
 3. **harness 不是噪声，是被测量对象** —— 同一模型多套壳子跑，出敏感度指数；真实 CLI 包成同一个接口直接比
-4. **测量装置自身要被测** —— 这是做此项目最大的收获，19 条缺陷清单就是它的产物
+4. **测量装置自身要被测** —— 这是做此项目最大的收获，20 条缺陷清单就是它的产物
 
 详见 [`docs/DESIGN.md`](docs/DESIGN.md)。
 
@@ -138,7 +138,7 @@ roster:
 
 - **装置先自检**：`python -m aipk selfcheck` 跑 13 族的 oracle 自洽 —— "对的答案不能被判错"。改任务族之后必须先过这道门，才允许花钱跑真模型。
 - **门禁要便宜**：`python -m aipk demo` 不需要任何 API key 就能跑通全链路（生成 → harness → 工具落盘 → 判定 → 报告），满分机器人必须 100%、错答机器人必须 0%。花了钱才发现装置坏了，是最贵的一种失败。
-- **19 条测量缺陷，每条配一个回归测试**（`tests/test_measurement.py`）。共同点还是那一句：模型异常差 → 先怀疑测量。清单和通用规则在 [`docs/MEASUREMENT_DEFECTS.md`](docs/MEASUREMENT_DEFECTS.md)，可以直接当自检表用。
+- **20 条测量缺陷，每条配一个回归测试**（`tests/test_measurement.py`）。共同点还是那一句：模型异常差 → 先怀疑测量。清单和通用规则在 [`docs/MEASUREMENT_DEFECTS.md`](docs/MEASUREMENT_DEFECTS.md)，可以直接当自检表用。
 - **测试自己也要被验证**：缺陷 #19 是"离线机器人的任务状态存在实例属性里"，多线程共用同一个 provider → A 题的答案被 B 题取走，满分机器人只过 92.3%，而单线程完全看不出来。补测试时把旧的坏实现拿出来跑：**第一版测试在坏代码上也是绿的**（`set_task` 和 `chat` 之间窗口太窄，GIL 下撞不上），改成用 barrier 强制并发之后才"旧实现必红、新实现必绿"。规则：抓不到 bug 的测试比没有测试更糟，它给你虚假的安全感。
 - **CI 四道门禁**：`.github/workflows/gates.yml` 在 push / PR 时自动跑 selfcheck、回归测试、离线 demo、密钥自检，全程不需要 key。
 - **"在我机器上是好的"不算数**：把仓库 clone 到别处、从别的目录调用、换一次并发度都要能跑通 —— 缺陷 #19 就是这么撞出来的。
@@ -167,7 +167,7 @@ roster:
 |---|---|
 | [`docs/DESIGN.md`](docs/DESIGN.md) | 设计思路：四条原则、五层结构、每族埋的坑 |
 | [`docs/FINDINGS.md`](docs/FINDINGS.md) | 实测结论（含全部数字与出处） |
-| [`docs/MEASUREMENT_DEFECTS.md`](docs/MEASUREMENT_DEFECTS.md) | 19 个测量缺陷清单 + 通用规则 |
+| [`docs/MEASUREMENT_DEFECTS.md`](docs/MEASUREMENT_DEFECTS.md) | 20 个测量缺陷清单 + 通用规则 |
 | [`docs/ASSESSMENT.md`](docs/ASSESSMENT.md) | 这套设计有效吗？能跟上新模型吗？+ 同类项目对照 |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | 部署、接网关、加任务族、常见坑 |
 | `HANDOFF.md` | 项目当前状态与下一步（维护者视角） |

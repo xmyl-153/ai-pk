@@ -184,7 +184,14 @@ class Provider:
 
     def __init__(self, spec: ModelSpec, gateways: dict[str, dict] | None = None, timeout_s: float = 240.0,
                  qps: float = 1.2):
-        gws = gateways or load_gateways()
+        # 注意这里的 `is not None`：显式传 {} 表示"这台机器一个网关都没配"，
+        # 用 `or` 会把它当成"没传"再去读配置，于是又抛一次 FileNotFoundError。
+        gws = gateways if gateways is not None else load_gateways()
+        if not gws:
+            raise KeyError(
+                f"没有网关配置，调不了 {spec.provider_id}/{spec.model_id}："
+                "先跑 `python -m aipk init` 生成 aipk.config.yaml 并填好 providers；"
+                "只想看效果用 `python -m aipk demo`（离线、不需要 key）。")
         if spec.provider_id not in gws:
             raise KeyError(f"未知网关 {spec.provider_id}；可用：{list(gws)}")
         gw = gws[spec.provider_id]

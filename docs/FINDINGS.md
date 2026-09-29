@@ -124,7 +124,7 @@ Reliability without Validity（[arXiv:2606.19544](https://arxiv.org/abs/2606.195
 （项目网关虽支持 `/responses`，但会拒绝 Codex 必发的 `reasoning.effort` 字段 → 无法做
 严格的同网关对照；详见 `tools/probe_responses_api.py`。）
 
-## 6. 我们自己的测量缺陷：18 个
+## 6. 我们自己的测量缺陷：20 个
 
 见 [`MEASUREMENT_DEFECTS.md`](MEASUREMENT_DEFECTS.md)。
 **这是本项目最该被复用的部分**：任何做评测的人都会踩，而且踩的时候都以为是模型的问题。

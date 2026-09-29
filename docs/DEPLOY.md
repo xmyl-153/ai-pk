@@ -8,7 +8,7 @@ pip install -r requirements.txt          # 只有 httpx + pyyaml
 
 python -m aipk selfcheck                 # 13 个族的 oracle 自洽（"对的不能被判错"）
 python -m aipk demo                      # 离线跑通全链路：满分机器人 100%、错答机器人 0%
-python tests/test_measurement.py         # 18 个测量缺陷的回归测试
+python tests/test_measurement.py         # 20 个测量缺陷的回归测试
 ```
 
 `demo` 会真的走完 任务生成 → 多轮 harness → 工具调用（含真改文件）→ 判定 → 报告，

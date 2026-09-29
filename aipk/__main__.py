@@ -222,7 +222,9 @@ def cmd_demo(args) -> int:
         models.append(ModelSpec("scripted", "wrong", "scripted-wrong", "offline"))
     print("离线演示：不连网关、不需要 key。")
     print("  scripted-oracle 应当 100% 通过；scripted-wrong 应当 0% 通过。")
-    runner = Runner(cfg, profile_name=args.profile)
+    # gateways={} = 这台机器一个网关都不需要：demo 跑的是 scripted 模型，
+    # 没有 aipk.config.yaml / ~/.dsh 也照样得能跑通（缺陷 #20）。
+    runner = Runner(cfg, profile_name=args.profile, gateways={})
     results, out = runner.run(models=models, families=families, judge_models=[])
     per: dict[str, list[int]] = {}
     for r in results:

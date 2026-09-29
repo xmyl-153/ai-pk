@@ -26,13 +26,17 @@ def _result_to_dict(r: RunResult) -> dict:
 
 class Runner:
     def __init__(self, cfg: RunConfig, profile_name: str = "frozen-v1", verbose: bool = True,
-                 harness=None):
-        """harness 不为 None 时用它替代冻结 harness（Phase B：真实 CLI 当壳子）。"""
+                 harness=None, gateways: dict[str, dict] | None = None):
+        """harness 不为 None 时用它替代冻结 harness（Phase B：真实 CLI 当壳子）。
+
+        gateways 显式传入就用它（离线 demo 传 {}：一个网关都不需要）；不传则用到才读
+        —— 见下面的 gateways 属性。
+        """
         self.cfg = cfg
         self.profile_name = profile_name
         self.profile = PROFILES.get(profile_name)
         self.ext_harness = harness
-        self.gateways = load_gateways()
+        self._gateways = gateways
         self.verbose = verbose
         self._lock = threading.Lock()
         self._providers: dict[str, Provider] = {}
@@ -41,6 +45,19 @@ class Runner:
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self._log_path = self.out_dir / "runs.jsonl"
         self._log = self._log_path.open("a", encoding="utf-8")
+
+    @property
+    def gateways(self) -> dict[str, dict]:
+        """按需读网关配置（第一次被用到时才读）。
+
+        以前在 __init__ 里无条件 load_gateways()：于是写着"离线、不需要任何 key"的
+        `aipk demo`，在没有 ~/.dsh、也没有 aipk.config.yaml 的机器上直接抛
+        FileNotFoundError —— 作者本机永远看不出来（DSH_HOME 就在那儿），
+        CI 上第一次跑就红。这是缺陷 #20。
+        """
+        if self._gateways is None:
+            self._gateways = load_gateways()
+        return self._gateways
 
     def provider(self, spec: ModelSpec) -> Provider:
         with self._lock:
@@ -79,6 +96,18 @@ class Runner:
         total = len(models) * len(tasks)
         self._say(f"[run {self.run_id}] profile={self.profile_name} models={len(models)} "
                   f"tasks={len(tasks)} 组合={total} seed={self.cfg.seed} reps={self.cfg.reps}")
+
+        # 真要连网关时才读配置，而且要**在开跑前**大声报错：
+        # 拖到 worker 线程里抛，就会被记成"基础设施故障"，静默失败最贵。
+        jmodels_early = judge_models if judge_models is not None else self.cfg.judge_models
+        needs_gateway = any(m.provider_id != "scripted" for m in models)
+        if not needs_gateway and jmodels_early:
+            try:
+                needs_gateway = any(self._split_key(k)[0] != "scripted" for k in jmodels_early)
+            except KeyError:
+                pass      # 认不出的裁判交给下面那段照旧告警，不在这里抢戏
+        if needs_gateway:
+            _ = self.gateways
 
         judge = None
         judge_keys: set[str] = set()      # 归一化后的裁判 key，用于"裁判不评自己"

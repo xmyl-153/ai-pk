@@ -2,7 +2,7 @@
 
 > 这份文件是**维护者视角**的当前状态与下一步；对外文档在 `README.md` 与 `docs/`：
 > `README.md`（门面）· `docs/DESIGN.md`（设计思路）· `docs/FINDINGS.md`（实测结论）·
-> `docs/MEASUREMENT_DEFECTS.md`（18 个缺陷）· `docs/ASSESSMENT.md`（有效性评估 + 同类项目对照）·
+> `docs/MEASUREMENT_DEFECTS.md`（20 个缺陷）· `docs/ASSESSMENT.md`（有效性评估 + 同类项目对照）·
 > `docs/DEPLOY.md`（部署）· `CONTRIBUTING.md`（怎么贡献）
 
 ## 一句话现状
@@ -10,6 +10,24 @@
 **13 个任务族、900+ 次真模型运行、Phase B 跑通、裁判标定 + 多裁判硬化、
 已封装成可开源仓库（首次提交 `187d621`：51 个文件 / 456 KB，无密钥、无 runs）。**
 代码在 `D:\ai\项目文件夹\ai-pk`。
+
+## CI 与离线门禁（2026-09-29）
+
+**CI 从加上那天起就是红的，原因不是模型、也不是任务族，是"离线 demo 偷偷依赖本机凭据"。**
+`Runner.__init__` 无条件 `load_gateways()`，而 demo 跑的是 scripted 模型、一个网关都不需要 ——
+本机有 `DSH_HOME`（`~/.dsh`）所以永远绿，CI（ubuntu-latest）上什么都没有，于是
+`python -m aipk demo` 一上来就 `FileNotFoundError`，3.10 / 3.12 两个 job 全挂。
+
+修法与防守（详见缺陷 #20）：
+
+- 网关改**按需加载**：`Runner.gateways` 变成属性（第一次被用到才读配置）；
+  `cmd_demo` 显式传 `gateways={}`；`Provider` 里 `gateways or load_gateways()` 的坑一并改成
+  `is not None` 判断。
+- 真要连网关时在**开跑前**大声报错，不允许拖到 worker 线程里变成"基础设施故障"。
+- 新增回归测试 `test_offline_demo_in_clean_env`：清掉 `DSH_*`、`HOME` 指向空目录、
+  cwd 换到别处再跑 demo（**先拿旧实现验证过它会红**）。
+- CI 的 demo 步骤带空 `HOME` 跑（`HOME=/tmp/aipk-clean-home`）：门禁模拟的是"别人 clone 下来的样子"，
+  不是"作者装了什么的机器"。
 
 ## 开源封装做了什么（2026-09-28）
 

@@ -34,6 +34,11 @@ jobs:
         run: python tests/test_measurement.py
 
       - name: 门禁 3/3 —— 离线跑通全链路（不需要 key；满分必须 100%、错答必须 0%）
+        # 干净环境：连 ~/.dsh 都没有。demo 走的是 scripted 模型，一个网关都不该需要 ——
+        # 之前它其实是靠作者本机的 DSH 凭据才"绿"的，CI 上第一次跑就红（缺陷 #20）。
+        env:
+          HOME: /tmp/aipk-clean-home
+          DSH_HOME: /tmp/aipk-clean-home/.dsh
         run: python -m aipk demo
 
       - name: 开源前自检 —— 确认没把密钥/隐私写进仓库

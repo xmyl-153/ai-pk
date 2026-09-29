@@ -104,8 +104,13 @@ run:                # 可选：覆盖默认运行参数
 '''
 
 
-def load_gateways() -> dict[str, dict]:
-    """返回 {provider_id: {base_url, api_key, display_name}}。"""
+def load_gateways(strict: bool = True) -> dict[str, dict]:
+    """返回 {provider_id: {base_url, api_key, display_name}}。
+
+    strict=False 时，一份配置都找不到就返回 {} 而不是抛错 —— 离线 demo 跑的是
+    scripted 模型，一个网关都不需要，不该因为"这台机器上没配网关"而跑不起来
+    （见缺陷 #20：CI 上第一次跑 demo 就是被这个卡住的）。
+    """
     cfg = load_user_config()
     provs_user = cfg.get("providers") or {}
     if provs_user:
@@ -123,6 +128,8 @@ def load_gateways() -> dict[str, dict]:
 
     # 回退：DSH 的凭据 + settings（作者本机用法）
     if not (CRED_FILE.exists() and SETTINGS_FILE.exists()):
+        if not strict:
+            return {}
         raise FileNotFoundError(
             "没有找到任何网关配置。三选一：\n"
             f"  1) 在项目目录放一个 {USER_CONFIG_NAMES[0]}（可先跑 `python -m aipk init` 生成模板）；\n"

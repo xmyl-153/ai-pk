@@ -693,6 +693,41 @@ def test_scripted_provider_thread_safety() -> int:
     return len(bad)
 
 
+def test_offline_demo_in_clean_env() -> int:
+    """干净环境门禁：没有 aipk.config.yaml、没有 ~/.dsh、cwd 也不在项目里，
+    号称"离线、不需要任何 key"的 demo 必须照样跑通。
+
+    实测事故（缺陷 #20）：Runner.__init__ 无条件 load_gateways()，而 demo 用的是
+    scripted 模型、一个网关都不需要 —— 于是 CI（ubuntu-latest）上第一次跑 demo 就
+    FileNotFoundError 挂掉，本地却永远绿（作者的 DSH_HOME 恰好就在那儿）。
+    项目自己那条规则的反面教材："在我机器上是好的"不算数。
+    """
+    import os
+    import subprocess
+    import tempfile
+
+    root = Path(__file__).resolve().parent.parent
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith("DSH_") and k != "AIPK_CONFIG"}
+    print("\n干净环境跑离线 demo：")
+    with tempfile.TemporaryDirectory(prefix="aipk-clean-") as td:
+        env["HOME"] = td
+        env["USERPROFILE"] = td          # Windows 上 Path.home() 看这个
+        env["PYTHONPATH"] = str(root)    # cwd 故意不在项目里：换目录也得能跑
+        env["PYTHONIOENCODING"] = "utf-8"   # 子进程输出统一 UTF-8，读回来不乱码
+        p = subprocess.run([sys.executable, "-m", "aipk", "demo", "--oracle-only"],
+                           cwd=td, env=env, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=600)
+    ok = p.returncode == 0
+    if not ok:
+        tail = ((p.stdout or "") + (p.stderr or "")).strip().splitlines()[-8:]
+        for line in tail:
+            print(f"  [FAIL] {line[:150]}")
+    print(f"  [{'OK  ' if ok else 'FAIL'}] 无 aipk.config.yaml、无 ~/.dsh、换目录 → "
+          f"{'跑通' if ok else '挂了：demo 不该依赖网关配置'}")
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
     b = test_trigger_semantics()
     c = test_cascade_trigger_wellformed()
@@ -707,6 +742,7 @@ if __name__ == "__main__":
     l = test_saturation_formula()  # noqa: E741
     m = test_scripted_provider_thread_safety()
     n = test_judge_strict_policy()
-    total = b + c + d + e + f + gg + h + i + j + k + l + m + n
+    o = test_offline_demo_in_clean_env()
+    total = b + c + d + e + f + gg + h + i + j + k + l + m + n + o
     print("\n结论：" + ("全部通过" if total == 0 else f"失败 {total} 项"))
     sys.exit(0 if total == 0 else 1)
