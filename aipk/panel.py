@@ -41,6 +41,49 @@ OFFLINE_BOTS: list[tuple[str, str, str]] = [
     ("wrong", "错答机器人", "格式合法、内容全错 —— 它应该 0% 通过"),
 ]
 
+# 认知校准：实测和大家印象对不上的模型，挂一张卡解释"为什么对不上"、本工具怎么回应。
+# 这是「测量装置自身要被测」的一部分 —— 承认自己的尺子量不到大家真正在意的那个维度，
+# 并把"默认分高 ≠ 用起来好"这件事摆到台面上。内容来自公开评测，附出处。
+PERCEPTION: dict[str, dict[str, Any]] = {
+    "alibailian/deepseek-v4-pro": {
+        "match": ["deepseek-v4-pro", "v4-pro", "v4pro"],
+        "impression": "很多人觉得它“用起来拉胯”，甚至不如 GLM-5.3-Flash。",
+        "measured": "本工具（63 题）：正确率 98.4%，比 flash 的 100% 略低一点点（置信区间重叠）；"
+                    "但“默认合成分”反而把它排在 flash 前面 —— 因为默认分的“质量”信号来自本工具"
+                    "那些已经饱和的代码题，没把成本/速度/正确率里那一两 pp 的差距算进去。",
+        "why": "① 开 thinking 时推理 token 能占输出的 80%+，代码写到一半被截断；"
+               "② 单价约为 flash 的 3 倍，而 flash 在多数任务咬得很紧，性价比观感差；"
+               "③ 前端视觉质感、长任务“后半段打磨”偏弱。",
+        "response": "把成本 / 速度 / 推理占比做成可加权的一等公民：用「便宜优先」权重重排，"
+                    "flash 就跑到 v4pro 前面了（和本工具数据一致）。**默认分高 ≠ 用起来好**，"
+                    "这正是本工具想让你看见的。",
+        "sources": [
+            ["Artificial Analysis：flash 42 vs v4pro 30",
+             "https://artificialanalysis.ai/zh/models/comparisons/glm-5-3-flash-vs-deepseek-v4-pro-0424-high"],
+            ["极客公园实测：thinking 挤爆输出预算", "https://www.geekpark.net/news/368777"],
+            ["302.AI 评测：后半段打磨弱",
+             "https://302.ai/blog/302-ai-benchmark-lab-review-on-deepseek-v4-pro-0813/"],
+        ],
+    },
+    "jiyuanapi/seed-2.1-pro": {
+        "match": ["seed-2.1-pro"],
+        "impression": "参数大、会“想”，但用过的普遍嫌它又慢又费 token。",
+        "measured": "本工具（63 题）：正确率 90.5%，但平均 166s/题、19432 token、推理占比 39% —— 全场最慢最费。",
+        "why": "推理占比高 + 长会话，单次调用的时间和账单都被放大。",
+        "response": "用「速度优先 / 便宜优先」权重，它会自然掉到后面；确实要它的深度，就用"
+                    "「性能优先」并给足等待时间。",
+        "sources": [],
+    },
+}
+
+
+def _perception_for(key: str) -> dict[str, Any] | None:
+    low = (key or "").lower()
+    for note in PERCEPTION.values():
+        if key in PERCEPTION or any(m in low for m in note.get("match", [])):
+            return note
+    return None
+
 _RUNS: dict[str, dict[str, Any]] = {}
 _LOCK = threading.Lock()
 
@@ -99,6 +142,8 @@ def _summarize(results: list, spec: ModelSpec) -> dict:
     solved = sum(1 for r in graded if r.solved)
     tokens = sum(r.prompt_tokens + r.completion_tokens for r in graded)
     reports_tokens = any((r.prompt_tokens or r.completion_tokens) for r in graded)
+    rea = sum(r.reasoning_tokens for r in graded)
+    rea_reported = any(r.reasoning_tokens for r in graded)
     return {
         "key": spec.key,
         "name": spec.name,
@@ -107,7 +152,10 @@ def _summarize(results: list, spec: ModelSpec) -> dict:
         "rate": (solved / total) if total else 0.0,
         "avg_ms": (sum(r.total_ms for r in graded) / total) if total else 0.0,
         "avg_turns": (sum(r.turns for r in graded) / total) if total else 0.0,
+        "avg_tok": (tokens / total) if (total and reports_tokens) else None,
         "tokens": tokens if reports_tokens else None,
+        # 推理 token 占比：v4pro 那类"thinking 挤爆输出预算"的体感，就体现在这里
+        "rea_ratio": (rea / tokens) if (reports_tokens and rea_reported) else None,
         "infra": sum(1 for r in mine if r.infra_failure),
         "cells": ["inf" if r.infra_failure else ("ok" if r.solved else "no") for r in mine],
         "per_task": {r.task_key: (None if r.infra_failure else r.solved) for r in mine},
@@ -179,38 +227,52 @@ def _verdict(L: dict, R: dict, fam_name: dict[str, str]) -> dict:
 # ---------------------------------------------------------------- 跑一局
 
 
-def _start(left_key: str, right_key: str, scope: str) -> dict:
+def _start_models(keys: list[str], scope: str) -> dict:
+    """跑一局。keys 是 2 个 → 比分模式（带胜方判定）；3 个及以上 → 跑分模式（排行榜）。"""
     from .runner import Runner
 
-    left, right = _spec_from_key(left_key), _spec_from_key(right_key)
+    keys = list(dict.fromkeys(k for k in keys if k))[:8]      # 去重、封顶 8 个，免得跑太久
+    if len(keys) < 2:
+        raise ValueError("至少选两个选手")
+    specs = [_spec_from_key(k) for k in keys]
+    mode = "pk" if len(specs) == 2 else "score"
     fams = QUICK_FAMILIES if scope != "full" else all_families()
     cfg = RunConfig(reps=1, tasks_per_family=1, max_turns=40,  # 分阶段族要够用的轮数
                     max_workers=4, judge_models=[])            # 面板不做盲评：省时间也省钱
     runner = Runner(cfg, profile_name="frozen-v1", verbose=False)
 
     run_id = runner.run_id
-    total = len(fams) * 2
+    total = len(fams) * len(specs)
     with _LOCK:
         _RUNS[run_id] = {"status": "running", "done": 0, "total": total, "result": None,
-                         "error": None, "out": str(runner.out_dir.relative_to(REPO_ROOT)),
+                         "error": None, "mode": mode,
+                         "out": str(runner.out_dir.relative_to(REPO_ROOT)),
                          "started": time.time()}
     fam_name = {f: f for f in fams}
 
     def work() -> None:
         try:
             # 真模型但没配好网关时，这里会抛出人话错误（延迟加载的好处：离线不受影响）
-            results, out = runner.run(models=[left, right], families=fams, judge_models=[])
-            L, R = _summarize(results, left), _summarize(results, right)
+            results, _out = runner.run(models=specs, families=fams, judge_models=[])
+            summaries = [_summarize(results, s) for s in specs]
+            res: dict[str, Any] = {"models": summaries, "mode": mode,
+                                   "out": str(runner.out_dir.relative_to(REPO_ROOT))}
+            if mode == "pk":
+                L, R = summaries
+                res.update({"left": L, "right": R, **_verdict(L, R, fam_name)})
             with _LOCK:
-                _RUNS[run_id].update({"status": "done", "done": total,
-                                      "result": {**_verdict(L, R, fam_name), "left": L, "right": R}})
+                _RUNS[run_id].update({"status": "done", "done": total, "result": res})
         except Exception as e:  # noqa: BLE001  面板里任何异常都要能在页面上看见
             with _LOCK:
                 _RUNS[run_id].update({"status": "error",
                                       "error": f"{type(e).__name__}: {str(e)[:300]}"})
 
     threading.Thread(target=work, daemon=True, name=f"pk-{run_id}").start()
-    return {"run_id": run_id, "total": total}
+    return {"run_id": run_id, "total": total, "mode": mode}
+
+
+def _start(left_key: str, right_key: str, scope: str) -> dict:
+    return _start_models([left_key, right_key], scope)
 
 
 def _progress(run_id: str) -> dict:
@@ -219,7 +281,7 @@ def _progress(run_id: str) -> dict:
         if run is None:
             return {"status": "error", "error": "没有这一局（面板重启过？再打一次就好）"}
         snap = dict(run)
-    lines = [f"开打：同一批题，两边各跑一遍。"]
+    lines = ["开跑：同一批题，各跑一遍。"]
     log_path = REPO_ROOT / snap["out"] / "runs.jsonl"
     if log_path.exists():
         rows = []
@@ -286,18 +348,29 @@ class _Handler(BaseHTTPRequestHandler):
             return self._file(target)
         if path == "/api/state":
             return self._json(_state())
+        if path == "/api/perception":
+            return self._json(PERCEPTION)
         if path.startswith("/api/pk/"):
             return self._json(_progress(path[len("/api/pk/"):]))
         return self._json({"error": "没有这个页面"}, 404)
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path != "/api/pk":
-            return self._json({"error": "没有这个接口"}, 404)
+        n = int(self.headers.get("Content-Length") or 0)
         try:
-            n = int(self.headers.get("Content-Length") or 0)
             payload = json.loads(self.rfile.read(n) or b"{}")
-            out = _start(str(payload.get("left") or ""), str(payload.get("right") or ""),
-                         str(payload.get("scope") or "quick"))
+        except Exception:  # noqa: BLE001
+            return self._json({"error": "请求体不是 JSON"}, 400)
+        try:
+            if self.path == "/api/pk":
+                out = _start(str(payload.get("left") or ""), str(payload.get("right") or ""),
+                             str(payload.get("scope") or "quick"))
+            elif self.path == "/api/score":
+                models = payload.get("models") or []
+                if isinstance(models, str):
+                    models = [models]
+                out = _start_models([str(m) for m in models], str(payload.get("scope") or "quick"))
+            else:
+                return self._json({"error": "没有这个接口"}, 404)
             return self._json(out)
         except Exception as e:  # noqa: BLE001
             return self._json({"error": f"{type(e).__name__}: {str(e)[:200]}"}, 400)

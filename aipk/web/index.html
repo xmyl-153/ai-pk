@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI PK · 对战台</title>
+<title>AI PK · 模型对战台</title>
 <link rel="stylesheet" href="/static/panel.css">
 </head>
 <body>
@@ -13,8 +13,8 @@
   <div class="brand">
     <span class="logo">PK</span>
     <div>
-      <h1>AI PK · 对战台</h1>
-      <p class="sub">同一批题，两边各跑一遍 —— 谁更能打，用同一把尺子量。</p>
+      <h1>AI PK · 模型对战台</h1>
+      <p class="sub">同一批题、同一把尺子 —— 但尺子怎么加权，你说了算。</p>
     </div>
   </div>
   <div class="top-right">
@@ -25,85 +25,150 @@
 </header>
 
 <main>
-  <!-- 选手池 -->
-  <section class="shelf">
-    <div class="shelf-head">
+  <!-- 模式切换：进页默认是「跑分模式」 -->
+  <div class="tabs">
+    <button class="tab active" id="tabScore">跑分模式 <span class="tab-sub">多个模型出排行榜</span></button>
+    <button class="tab" id="tabPk">比分模式 <span class="tab-sub">两个模型左右 PK</span></button>
+  </div>
+
+  <!-- ================= 跑分模式（默认） ================= -->
+  <section id="scoreView" class="view">
+    <div class="pool-wrap">
+      <h2>参赛名单</h2>
+      <p class="hint">点选手加入 / 移出名单（至少 2 个，最多 8 个），同一批题各跑一遍。</p>
+      <div class="pool" id="scorePool"></div>
+    </div>
+
+    <div class="weighting">
+      <div class="weight-head">
+        <h2>加权 · 你心里的"好模型"长什么样</h2>
+        <div class="presets">
+          <button class="preset" data-preset="均衡">均衡</button>
+          <button class="preset" data-preset="性能优先">性能优先</button>
+          <button class="preset" data-preset="便宜优先">便宜优先</button>
+          <button class="preset" data-preset="速度优先">速度优先</button>
+        </div>
+      </div>
+      <div class="sliders">
+        <label>质量（正确率）<input type="range" id="wq" min="0" max="100" value="40"><b id="wqVal">40</b></label>
+        <label>速度（越快越好）<input type="range" id="ws" min="0" max="100" value="20"><b id="wsVal">20</b></label>
+        <label>成本（越省越好）<input type="range" id="wc" min="0" max="100" value="20"><b id="wcVal">20</b></label>
+        <label>推理克制（越省 token 越好）<input type="range" id="wr" min="0" max="100" value="20"><b id="wrVal">20</b></label>
+      </div>
+      <p class="weight-note">改权重，排行榜<b>实时重排</b>—— 同一个模型，你更在意"能算对"还是"又快又省"，排名就会不一样。这正是"默认分高 ≠ 用起来好"的现场。</p>
+    </div>
+
+    <div class="controls">
+      <label class="pick">题量
+        <select id="scopeScore">
+          <option value="quick" selected>快速（6 类任务）</option>
+          <option value="full">全套（13 类任务）</option>
+        </select>
+      </label>
+      <button class="btn primary" id="btnScore" disabled>开始跑分</button>
+      <span class="note" id="scoreNote"></span>
+    </div>
+
+    <div class="controls sample-row">
+      <button class="btn" id="btnSample">看真实案例：DeepSeek V4 Pro vs GLM 5.3 Flash</button>
+      <span class="note">不花钱 —— 直接看本仓库 630 次真实运行里，"实测 vs 大众印象"差在哪</span>
+    </div>
+
+    <div class="progress" id="scoreProgress" hidden>
+      <div class="bar"><i id="scoreBar"></i></div>
+      <div class="log" id="scoreLog"></div>
+    </div>
+
+    <section class="result" id="scoreResult" hidden>
+      <h2>排行榜 <span class="result-sub" id="lbSub">（按当前权重）</span></h2>
+      <table class="board">
+        <thead><tr>
+          <th class="rank">#</th><th>模型</th><th class="score">综合分</th>
+          <th>正确率</th><th>平均耗时</th><th>平均 token</th><th>推理占比</th><th>轮数</th>
+        </tr></thead>
+        <tbody id="leaderboard"></tbody>
+      </table>
+      <p class="fine">综合分 = 各维度归一化后按上面的权重加权，满分 100。没数据的维度（比如离线机器人不上报 token）按中性 0.5 处理，不会硬判成最好或最差。</p>
+    </section>
+
+    <section class="result" id="scorePerception" hidden>
+      <h2>认知校准 <span class="result-sub">实测和大家印象对不上的地方</span></h2>
+      <div id="perceptionCards"></div>
+    </section>
+  </section>
+
+  <!-- ================= 比分模式 ================= -->
+  <section id="pkView" class="view" hidden>
+    <div class="pool-wrap">
       <h2>选手池</h2>
-      <p class="hint">把卡片拖到左边或右边的场地上；不想拖就点一下卡片、再点场地。</p>
+      <p class="hint">把卡片拖到左边或右边的场地；不想拖就点一下卡片、再点场地。</p>
+      <div class="pool" id="pkPool"></div>
     </div>
-    <div class="pool" id="pool"></div>
-  </section>
 
-  <!-- 对阵盘 -->
-  <section class="arena">
-    <div class="side left" id="sideLeft" data-side="left">
-      <div class="side-head">
-        <span class="dot"></span><span class="side-name">左场</span>
-        <button class="mini" data-act="clear" data-side="left" title="清空">清空</button>
-      </div>
-      <div class="slot" id="slotLeft">
-        <div class="slot-empty">把选手拖到这儿</div>
-        <div class="fighter" hidden>
-          <div class="fighter-name"></div>
-          <div class="fighter-meta"></div>
+    <div class="arena">
+      <div class="side left" id="sideLeft" data-side="left">
+        <div class="side-head">
+          <span class="dot"></span><span class="side-name">左场</span>
+          <button class="mini" data-act="clear" data-side="left">清空</button>
+        </div>
+        <div class="slot" id="slotLeft">
+          <div class="slot-empty">把选手拖到这儿</div>
+          <div class="fighter" hidden><div class="fighter-name"></div><div class="fighter-meta"></div></div>
+        </div>
+        <div class="stats" id="statsLeft" hidden>
+          <div class="big"><span class="num">–</span><span class="unit">%</span><span class="lbl">通过率</span></div>
+          <div class="cells"></div><div class="rows"></div>
         </div>
       </div>
-      <div class="stats" id="statsLeft" hidden>
-        <div class="big"><span class="num">–</span><span class="unit">%</span><span class="lbl">通过率</span></div>
-        <div class="cells"></div>
-        <div class="rows"></div>
-      </div>
-    </div>
 
-    <div class="center">
-      <div class="vs" id="vs">VS</div>
-      <div class="verdict" id="verdict" hidden></div>
-    </div>
-
-    <div class="side right" id="sideRight" data-side="right">
-      <div class="side-head">
-        <span class="dot"></span><span class="side-name">右场</span>
-        <button class="mini" data-act="clear" data-side="right" title="清空">清空</button>
+      <div class="center">
+        <div class="vs" id="vs">VS</div>
+        <div class="verdict" id="verdict" hidden></div>
       </div>
-      <div class="slot" id="slotRight">
-        <div class="slot-empty">把选手拖到这儿</div>
-        <div class="fighter" hidden>
-          <div class="fighter-name"></div>
-          <div class="fighter-meta"></div>
+
+      <div class="side right" id="sideRight" data-side="right">
+        <div class="side-head">
+          <span class="dot"></span><span class="side-name">右场</span>
+          <button class="mini" data-act="clear" data-side="right">清空</button>
+        </div>
+        <div class="slot" id="slotRight">
+          <div class="slot-empty">把选手拖到这儿</div>
+          <div class="fighter" hidden><div class="fighter-name"></div><div class="fighter-meta"></div></div>
+        </div>
+        <div class="stats" id="statsRight" hidden>
+          <div class="big"><span class="num">–</span><span class="unit">%</span><span class="lbl">通过率</span></div>
+          <div class="cells"></div><div class="rows"></div>
         </div>
       </div>
-      <div class="stats" id="statsRight" hidden>
-        <div class="big"><span class="num">–</span><span class="unit">%</span><span class="lbl">通过率</span></div>
-        <div class="cells"></div>
-        <div class="rows"></div>
-      </div>
     </div>
-  </section>
 
-  <!-- 操作条 -->
-  <section class="controls">
-    <label class="pick">题量
-      <select id="scope">
-        <option value="quick" selected>快速（6 类任务，约十几秒）</option>
-        <option value="full">全套（13 类任务，慢一些但更全）</option>
-      </select>
-    </label>
-    <button class="btn ghost" id="btnRandom">随机配一对</button>
-    <button class="btn primary" id="btnFight" disabled>开打</button>
-    <span class="note" id="note"></span>
-  </section>
+    <div class="controls">
+      <label class="pick">题量
+        <select id="scopePk">
+          <option value="quick" selected>快速（6 类任务）</option>
+          <option value="full">全套（13 类任务）</option>
+        </select>
+      </label>
+      <button class="btn" id="btnRandom">随机配一对</button>
+      <button class="btn primary" id="btnFight" disabled>开打</button>
+      <span class="note" id="pkNote"></span>
+    </div>
 
-  <!-- 进度 -->
-  <section class="progress" id="progressBox" hidden>
-    <div class="bar"><i id="barFill"></i></div>
-    <div class="log" id="log"></div>
-  </section>
+    <div class="progress" id="progressBox" hidden>
+      <div class="bar"><i id="barFill"></i></div>
+      <div class="log" id="log"></div>
+    </div>
 
-  <!-- 结果说明 -->
-  <section class="aftermath" id="aftermath" hidden>
-    <h2>这一局怎么回事</h2>
-    <div id="aftermathBody"></div>
-    <p class="fine">口径提醒：结论只对"这一批题 + 这次配置"负责，不代表某个模型整体更强。想更严谨就多跑几轮（命令行 <code>--reps 3</code>）。</p>
+    <section class="result" id="aftermath" hidden>
+      <h2>这一局怎么回事</h2>
+      <div id="aftermathBody"></div>
+      <p class="fine">口径提醒：结论只对"这一批题 + 这次配置"负责，不代表某个模型整体更强。</p>
+    </section>
+
+    <section class="result" id="pkPerception" hidden>
+      <h2>认知校准 <span class="result-sub">实测和大家印象对不上的地方</span></h2>
+      <div id="pkPerceptionCards"></div>
+    </section>
   </section>
 </main>
 
