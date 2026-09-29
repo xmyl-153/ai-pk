@@ -602,6 +602,37 @@ def test_saturation_formula() -> int:
     return bad
 
 
+def test_judge_strict_policy() -> int:
+    """严格盲评模式：位置翻转的裁决要**丢弃**，而不是记成平局。
+
+    为什么要有这个开关：实测裁判实战翻转率约 26%，把翻转记成 0.5 分
+    等于把噪声往中间拉、连真实差距一起抹平。严格模式宁愿样本少也不让拿不准的裁决参与打分。
+    """
+    from aipk.grade import JudgeVerdict, verdict_score
+
+    print("\n严格盲评模式：")
+    cases = [
+        ("模型赢", JudgeVerdict(winner="1"), False, 1.0),
+        ("参考解赢", JudgeVerdict(winner="2"), False, 0.0),
+        ("判平", JudgeVerdict(winner="tie"), False, 0.5),
+        ("位置翻转（宽松）", JudgeVerdict(winner="tie", flipped=True), False, 0.5),
+        ("位置翻转（严格）", JudgeVerdict(winner="tie", flipped=True), True, None),
+        ("裁判没判出来", JudgeVerdict(winner="tie", invalid=True), False, None),
+        ("没判出来+严格", JudgeVerdict(winner="tie", invalid=True), True, None),
+    ]
+    bad = 0
+    for label, v, strict, want in cases:
+        got = verdict_score(v, strict=strict)
+        ok = got == want
+        if not ok:
+            bad += 1
+        print(f"  [{'OK  ' if ok else 'FAIL'}] {label:<16} strict={strict!s:<5} "
+              f"→ {got}（期望 {want}）")
+    print("  " + ("翻转裁决在严格模式下被丢弃、且绝不会被当成平局送分"
+                  if bad == 0 else f"{bad} 处口径不对"))
+    return bad
+
+
 def test_scripted_provider_thread_safety() -> int:
     """离线机器人必须线程安全：并发时不能把 A 题的答案交给 B 题。
 
@@ -675,6 +706,7 @@ if __name__ == "__main__":
     k = test_verdict_key_includes_model()
     l = test_saturation_formula()  # noqa: E741
     m = test_scripted_provider_thread_safety()
-    total = b + c + d + e + f + gg + h + i + j + k + l + m
+    n = test_judge_strict_policy()
+    total = b + c + d + e + f + gg + h + i + j + k + l + m + n
     print("\n结论：" + ("全部通过" if total == 0 else f"失败 {total} 项"))
     sys.exit(0 if total == 0 else 1)

@@ -124,6 +124,25 @@ class Judge:
 # ---------------------------------------------------------------- 裁判自审
 
 
+def verdict_score(v: JudgeVerdict, strict: bool = False) -> float | None:
+    """把一次盲评裁决折算成"对参考解"的相对分；判不出来返回 None。
+
+    a = 模型答案，b = 参考解：赢=1.0 平=0.5 输=0.0。
+
+    `strict=True`（严格模式）下，**位置翻转的裁决直接丢弃**（返回 None），而不是记成平局。
+    为什么需要这个开关：实测裁判实战位置翻转率 26%，
+    "翻转记平局"会把噪声往 0.5 拉、连真实差距一起抹平；
+    严格模式宁愿样本少，也不让拿不准的裁决参与打分。
+    两种口径都能算（`tools/rejudge.py` 出对照表），
+    由使用者按"要样本量还是要硬度"选。
+    """
+    if v.invalid:
+        return None
+    if v.flipped and strict:
+        return None
+    return {"1": 1.0, "2": 0.0, "tie": 0.5}.get(v.winner, 0.5)
+
+
 def judge_audit(verdicts: list[JudgeVerdict]) -> dict:
     """裁判自身的可靠性：位置翻转率 + 有效裁决数。"""
     n = len(verdicts)

@@ -118,7 +118,7 @@ def cmd_run(args) -> int:
                     temperature=args.temperature, max_tokens=args.max_tokens,
                     tasks_per_family=args.tasks_per_family,
                     qps_per_gateway=args.qps, max_workers=args.workers,
-                    infra_retries=args.infra_retries)
+                    infra_retries=args.infra_retries, judge_strict=args.judge_strict)
     models = [ModelSpec(*r) for r in ROSTER]
     if args.models:
         want = {x.strip() for x in args.models.split(",")}
@@ -335,6 +335,8 @@ def main(argv: list[str] | None = None) -> int:
     rn.add_argument("--profiles", help="逗号分隔的 harness profile")
     rn.add_argument("--judge", help="逗号分隔的裁判模型；不传则用默认裁判")
     rn.add_argument("--no-judge", action="store_true", help="关闭盲评（省时间省钱）")
+    rn.add_argument("--judge-strict", action="store_true",
+                    help="严格盲评：位置翻转的裁决直接丢弃，不记平局（实测翻转率约 26%）")
     rn.add_argument("--qps", type=float, default=1.2, help="每网关限速（请求/秒），防被 429 打成假 0 分")
     rn.add_argument("--workers", type=int, default=6, help="并发上限")
     rn.add_argument("--infra-retries", type=int, default=2, help="基础设施故障重投次数")

@@ -199,6 +199,7 @@ class RunConfig:
     max_workers: int = 6          # 并发上限（配合限速，别把网关打爆）
     infra_retries: int = 2        # 基础设施故障重投次数（不计入模型能力）
     judge_models: list[str] = field(default_factory=lambda: ["jiyuanapi/glm-5.3"])
+    judge_strict: bool = False     # True = 位置翻转的裁决直接丢弃（不记平局）
     families: list[str] | None = None   # None = 全部
     roster: list[ModelSpec] = field(default_factory=list)
     out_dir: Path = field(default_factory=lambda: Path(__file__).resolve().parent.parent / "runs")

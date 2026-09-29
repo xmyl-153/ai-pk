@@ -257,6 +257,8 @@ def judge_audit_from_results(results: list[RunResult]) -> dict:
                     per_judge[jk]["flipped"] += 1 if flipped else 0
                     if w in ("1", "2"):
                         per_judge[jk]["decided"] += 1
+                        if w == "1":                     # 判"模型赢"
+                            per_judge[jk]["decided_model"] += 1
                     elif w == "tie":
                         per_judge[jk]["tie"] += 1
             elif "judge_error" in t or "judge_invalid" in t:
@@ -273,10 +275,22 @@ def judge_audit_from_results(results: list[RunResult]) -> dict:
         "invalid_rate": round(invalid / (n + invalid), 3) if (n + invalid) else None,
         "per_model": {k: dict(v) for k, v in sorted(per_model.items())},
         "per_judge": {
-            k: {**dict(v), "flip_rate": round(v["flipped"] / v["n"], 3) if v["n"] else None}
+            k: {**dict(v), "flip_rate": round(v["flipped"] / v["n"], 3) if v["n"] else None,
+                # 宽严度 = 判"模型赢"占已裁决的比例。实测三个裁判 33% / 92% / 89% ——
+                # 这个差异才是"换个裁判就换名次"的直接原因，必须报出来
+                "model_win_rate": (round(v["decided_model"] / v["decided"], 3)
+                                   if v.get("decided") else None)}
             for k, v in sorted(per_judge.items())
         },
+        "severity_spread": _severity_spread(per_judge),
     }
+
+
+def _severity_spread(per_judge: dict) -> float | None:
+    """裁判之间"宽严度"的极差。≥0.3 就意味着换裁判足以改变结论。"""
+    rates = [v["decided_model"] / v["decided"]
+             for v in per_judge.values() if v.get("decided")]
+    return round(max(rates) - min(rates), 3) if len(rates) >= 2 else None
 
 
 # ---------------------------------------------------------------- 综合分

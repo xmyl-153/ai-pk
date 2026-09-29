@@ -10,7 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .config import ROSTER, ModelSpec, RunConfig, load_gateways
-from .grade import Judge
+from .grade import Judge, verdict_score
 from .harness import PROFILES, FrozenHarness, RunResult
 from .provider import Provider
 from .tasks import all_families, derive_seed, make
@@ -125,12 +125,14 @@ class Runner:
                 # 裁判不评自己（自偏好偏差），自己那格记为空
                 try:
                     v = judge.compare(res.final_answer or "", inst.reference, inst.judge_prompt)
-                    if v.invalid:
-                        # 没判出来 ≠ 平局：不写分数，只记无效（否则等于白送 0.5 分）
-                        res.transcript.append({"judge_invalid": v.raw})
+                    sc = verdict_score(v, strict=self.cfg.judge_strict)
+                    if sc is None:
+                        # 没判出来 / 严格模式下被丢弃 ≠ 平局：不写分数，只记无效
+                        # （写成平局等于白送 0.5 分，把噪声拉向中间、抹平真实差距）
+                        res.transcript.append({"judge_invalid": v.raw,
+                                               "reason": "invalid" if v.invalid else "flipped"})
                     else:
-                        # 以"相对参考解"归一：赢=1.0 平=0.5 输=0
-                        res.judge_scores["vs_reference"] = {"1": 1.0, "2": 0.0, "tie": 0.5}[v.winner]
+                        res.judge_scores["vs_reference"] = sc
                         res.transcript.append({"judge": v.raw, "flipped": v.flipped,
                                                "winner": v.winner})
                 except Exception as e:  # noqa: BLE001

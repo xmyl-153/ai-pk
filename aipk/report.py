@@ -324,15 +324,21 @@ def _markdown(order, stats, ratings, comp, stability, sens, fam, fams, run_dir, 
         L.append("")
         pj = audit.get("per_judge") or {}
         if len(pj) > 1:
-            L.append("| 裁判 | 判决数 | 位置翻转率 | 判平率 |")
-            L.append("|---|---|---|---|")
+            L.append("| 裁判 | 判决数 | 位置翻转率 | 判平率 | **宽严度**（判模型赢） |")
+            L.append("|---|---|---|---|---|")
             for jk, d in pj.items():
                 tie_r = d.get("tie", 0) / d["n"] if d.get("n") else 0
                 L.append(f"| {jk} | {d.get('n', 0)} | {_pct(d.get('flip_rate'))} "
-                         f"| {_pct(tie_r)} |")
+                         f"| {_pct(tie_r)} | {_pct(d.get('model_win_rate'))} |")
             L.append("")
-            L.append("> 多裁判（委员会）跑的时候要看这一栏：**是哪个裁判在翻**。"
-                     "把翻转摊平成平局、再多数票定夺，比单裁判直接定胜负稳。")
+            L.append("> 多裁判跑的时候先看这一栏：**谁在翻**（翻转率）+ **谁宽谁严**（宽严度）。"
+                     "实测同一批答案上三个裁判的宽严度能差 33% vs 92% —— "
+                     "**换裁判就能换名次**，所以名次只能当弱证据。")
+            sp = audit.get("severity_spread")
+            if sp is not None and sp >= 0.3:
+                L.append("")
+                L.append(f"**⚠ 本轮裁判宽严度极差 {sp:.0%}（≥30%）："
+                         f"换一个裁判名次就会变，不要写进结论。**")
             L.append("")
         jm = {k: st.judge_mean for k, st in stats.items() if st.judge_mean is not None}
         if jm:
