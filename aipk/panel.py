@@ -15,14 +15,17 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import queue as _queue
 import socket
 import threading
 import time
+import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from . import __version__
 from .config import ROSTER, ModelSpec, RunConfig, load_gateways
 from .tasks import all_families
 
@@ -41,51 +44,36 @@ OFFLINE_BOTS: list[tuple[str, str, str]] = [
     ("wrong", "错答机器人", "格式合法、内容全错 —— 它应该 0% 通过"),
 ]
 
-# 认知校准：实测和大家印象对不上的模型，挂一张卡解释"为什么对不上"、本工具怎么回应。
-# 这是「测量装置自身要被测」的一部分 —— 承认自己的尺子量不到大家真正在意的那个维度，
-# 并把"默认分高 ≠ 用起来好"这件事摆到台面上。内容来自公开评测，附出处。
-PERCEPTION: dict[str, dict[str, Any]] = {
-    "alibailian/deepseek-v4-pro": {
-        "match": ["deepseek-v4-pro", "v4-pro", "v4pro"],
-        "impression": "很多人觉得它“用起来拉胯”，甚至不如 GLM-5.3-Flash。",
-        "measured": "本工具（63 题）：正确率 98.4%，比 flash 的 100% 略低一点点（置信区间重叠）；"
-                    "但“默认合成分”反而把它排在 flash 前面 —— 因为默认分的“质量”信号来自本工具"
-                    "那些已经饱和的代码题，没把成本/速度/正确率里那一两 pp 的差距算进去。",
-        "why": "① 开 thinking 时推理 token 能占输出的 80%+，代码写到一半被截断；"
-               "② 单价约为 flash 的 3 倍，而 flash 在多数任务咬得很紧，性价比观感差；"
-               "③ 前端视觉质感、长任务“后半段打磨”偏弱。",
-        "response": "把成本 / 速度 / 推理占比做成可加权的一等公民：用「便宜优先」权重重排，"
-                    "flash 就跑到 v4pro 前面了（和本工具数据一致）。**默认分高 ≠ 用起来好**，"
-                    "这正是本工具想让你看见的。",
-        "sources": [
-            ["Artificial Analysis：flash 42 vs v4pro 30",
-             "https://artificialanalysis.ai/zh/models/comparisons/glm-5-3-flash-vs-deepseek-v4-pro-0424-high"],
-            ["极客公园实测：thinking 挤爆输出预算", "https://www.geekpark.net/news/368777"],
-            ["302.AI 评测：后半段打磨弱",
-             "https://302.ai/blog/302-ai-benchmark-lab-review-on-deepseek-v4-pro-0813/"],
-        ],
-    },
-    "jiyuanapi/seed-2.1-pro": {
-        "match": ["seed-2.1-pro"],
-        "impression": "参数大、会“想”，但用过的普遍嫌它又慢又费 token。",
-        "measured": "本工具（63 题）：正确率 90.5%，但平均 166s/题、19432 token、推理占比 39% —— 全场最慢最费。",
-        "why": "推理占比高 + 长会话，单次调用的时间和账单都被放大。",
-        "response": "用「速度优先 / 便宜优先」权重，它会自然掉到后面；确实要它的深度，就用"
-                    "「性能优先」并给足等待时间。",
-        "sources": [],
-    },
-}
-
-
-def _perception_for(key: str) -> dict[str, Any] | None:
-    low = (key or "").lower()
-    for note in PERCEPTION.values():
-        if key in PERCEPTION or any(m in low for m in note.get("match", [])):
-            return note
-    return None
-
 _RUNS: dict[str, dict[str, Any]] = {}
 _LOCK = threading.Lock()
+# 排队：一次只跑一局（一起压网关会触发限流，反而把模型打成假 0 分），后面的在队列里等
+_JOBQ: "_queue.Queue[str]" = _queue.Queue()
+_DISP_STARTED = False
+
+
+def _ensure_dispatcher() -> None:
+    global _DISP_STARTED
+    with _LOCK:
+        if _DISP_STARTED:
+            return
+        _DISP_STARTED = True
+    threading.Thread(target=_dispatcher, daemon=True, name="pk-dispatch").start()
+
+
+def _dispatcher() -> None:
+    while True:
+        rid = _JOBQ.get()
+        with _LOCK:
+            entry = _RUNS.get(rid)
+        if entry is None:
+            _JOBQ.task_done()
+            continue
+        with _LOCK:
+            entry["status"] = "running"
+        try:
+            entry["_work"]()
+        finally:
+            _JOBQ.task_done()
 
 
 # ---------------------------------------------------------------- 选手名单
@@ -232,8 +220,8 @@ def _start_models(keys: list[str], scope: str) -> dict:
     from .runner import Runner
 
     keys = list(dict.fromkeys(k for k in keys if k))[:8]      # 去重、封顶 8 个，免得跑太久
-    if len(keys) < 2:
-        raise ValueError("至少选两个选手")
+    if len(keys) < 1:
+        raise ValueError("至少选一个选手")
     specs = [_spec_from_key(k) for k in keys]
     mode = "pk" if len(specs) == 2 else "score"
     fams = QUICK_FAMILIES if scope != "full" else all_families()
@@ -243,11 +231,6 @@ def _start_models(keys: list[str], scope: str) -> dict:
 
     run_id = runner.run_id
     total = len(fams) * len(specs)
-    with _LOCK:
-        _RUNS[run_id] = {"status": "running", "done": 0, "total": total, "result": None,
-                         "error": None, "mode": mode,
-                         "out": str(runner.out_dir.relative_to(REPO_ROOT)),
-                         "started": time.time()}
     fam_name = {f: f for f in fams}
 
     def work() -> None:
@@ -267,8 +250,14 @@ def _start_models(keys: list[str], scope: str) -> dict:
                 _RUNS[run_id].update({"status": "error",
                                       "error": f"{type(e).__name__}: {str(e)[:300]}"})
 
-    threading.Thread(target=work, daemon=True, name=f"pk-{run_id}").start()
-    return {"run_id": run_id, "total": total, "mode": mode}
+    with _LOCK:
+        _RUNS[run_id] = {"status": "queued", "done": 0, "total": total, "result": None,
+                         "error": None, "mode": mode, "_work": work,
+                         "out": str(runner.out_dir.relative_to(REPO_ROOT)),
+                         "started": time.time()}
+    _JOBQ.put(run_id)                 # 排队：一次只跑一局，后面的自动等
+    _ensure_dispatcher()
+    return {"run_id": run_id, "total": total, "mode": mode, "queue": _JOBQ.qsize()}
 
 
 def _start(left_key: str, right_key: str, scope: str) -> dict:
@@ -280,8 +269,12 @@ def _progress(run_id: str) -> dict:
         run = _RUNS.get(run_id)
         if run is None:
             return {"status": "error", "error": "没有这一局（面板重启过？再打一次就好）"}
-        snap = dict(run)
-    lines = ["开跑：同一批题，各跑一遍。"]
+        snap = {k: v for k, v in run.items() if not k.startswith("_")}   # _work 不可 JSON 序列化
+    if snap["status"] == "queued":
+        lines = [f"排队中：队列里还有 {_JOBQ.qsize()} 局，轮到就自动开始"
+                 "（一次只跑一局，避免一起压网关触发限流）。"]
+    else:
+        lines = ["开跑：同一批题，各跑一遍。"]
     log_path = REPO_ROOT / snap["out"] / "runs.jsonl"
     if log_path.exists():
         rows = []
@@ -301,6 +294,38 @@ def _progress(run_id: str) -> dict:
         lines.append(f"出错了：{snap['error']}")
     snap["log"] = lines
     return snap
+
+
+# ---------------------------------------------------------------- 关于 / 更新
+
+
+def _about() -> dict:
+    return {
+        "name": "AI PK · 模型对战台",
+        "version": __version__,
+        "author": "xmyl-153（星梦幽灵）",
+        "homepage": "https://github.com/xmyl-153/ai-pk",
+        "issues": "https://github.com/xmyl-153/ai-pk/issues",
+        "contact": "提 Issue / PR 是最快的联系方式；面板只在你本机跑，不会上传任何东西。",
+    }
+
+
+def _update() -> dict:
+    """尽力联网查一下有没有新版本；查不到就提示手动 git pull（不联网也能用）。"""
+    cur = __version__
+    try:
+        req = urllib.request.Request(
+            "https://api.github.com/repos/xmyl-153/ai-pk/releases/latest",
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "aipk-panel"})
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        latest = str(data.get("tag_name") or "").lstrip("v")
+        return {"ok": True, "current": cur, "latest": latest or cur,
+                "has_update": bool(latest) and latest != cur,
+                "note": "" if (latest and latest != cur) else "已是最新。"}
+    except Exception as e:  # noqa: BLE001  联网失败不该影响面板
+        return {"ok": False, "current": cur, "latest": None, "has_update": False,
+                "note": f"联网检查失败（{type(e).__name__}）；要更新请手动 `git pull`。"}
 
 
 # ---------------------------------------------------------------- HTTP
@@ -348,8 +373,10 @@ class _Handler(BaseHTTPRequestHandler):
             return self._file(target)
         if path == "/api/state":
             return self._json(_state())
-        if path == "/api/perception":
-            return self._json(PERCEPTION)
+        if path == "/api/about":
+            return self._json(_about())
+        if path == "/api/update":
+            return self._json(_update())
         if path.startswith("/api/pk/"):
             return self._json(_progress(path[len("/api/pk/"):]))
         return self._json({"error": "没有这个页面"}, 404)

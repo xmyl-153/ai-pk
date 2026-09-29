@@ -18,24 +18,44 @@
     </div>
   </div>
   <div class="top-right">
+    <button class="tag linklike" id="btnConfig">＋ 接入我的模型</button>
     <span class="tag">本地运行</span>
-    <span class="tag">不上传任何东西</span>
     <span class="tag" id="gatewayTag">检查网关中…</span>
   </div>
 </header>
 
+<!-- 配置个人网关的引导（点右上角展开） -->
+<section class="guide" id="configGuide" hidden>
+  <div class="guide-head">
+    <h2>接入你自己的模型（3 步）</h2>
+    <button class="mini" id="guideClose">收起</button>
+  </div>
+  <ol>
+    <li>在项目根目录建一个 <code>aipk.config.yaml</code>（或跑 <code>python -m aipk init</code> 生成模板）；</li>
+    <li>填上你的 OpenAI 兼容网关，<b>密钥放环境变量、不要写进文件</b>；</li>
+    <li>保存后<b>刷新本页</b>，"接进来的真模型"就会出现在选手池里。</li>
+  </ol>
+  <pre id="guideYaml">providers:
+  mygateway:
+    base_url: https://api.example.com/v1
+    api_key_env: MY_GATEWAY_API_KEY   # 密钥从这个环境变量读
+roster:
+  - [mygateway, your-model-id, "我的模型", flagship]</pre>
+  <p class="fine">设好环境变量再启动面板，例如 Windows：<code>set MY_GATEWAY_API_KEY=sk-xxx</code> 然后双击 <code>启动对战台.bat</code>。跑真模型会按你的网关计费。</p>
+</section>
+
 <main>
-  <!-- 模式切换：进页默认是「跑分模式」 -->
   <div class="tabs">
     <button class="tab active" id="tabScore">跑分模式 <span class="tab-sub">多个模型出排行榜</span></button>
     <button class="tab" id="tabPk">比分模式 <span class="tab-sub">两个模型左右 PK</span></button>
+    <button class="tab" id="tabAbout">关于 <span class="tab-sub">版本 / 更新 / 联系</span></button>
   </div>
 
   <!-- ================= 跑分模式（默认） ================= -->
   <section id="scoreView" class="view">
     <div class="pool-wrap">
       <h2>参赛名单</h2>
-      <p class="hint">点选手加入 / 移出名单（至少 2 个，最多 8 个），同一批题各跑一遍。</p>
+      <p class="hint">点选手加入 / 移出名单（1 个也能跑，最多 8 个）。想接自己的模型？点右上角「＋ 接入我的模型」。</p>
       <div class="pool" id="scorePool"></div>
     </div>
 
@@ -43,7 +63,7 @@
       <div class="weight-head">
         <h2>加权 · 你心里的"好模型"长什么样</h2>
         <div class="presets">
-          <button class="preset" data-preset="均衡">均衡</button>
+          <button class="preset active" data-preset="均衡">均衡</button>
           <button class="preset" data-preset="性能优先">性能优先</button>
           <button class="preset" data-preset="便宜优先">便宜优先</button>
           <button class="preset" data-preset="速度优先">速度优先</button>
@@ -55,7 +75,7 @@
         <label>成本（越省越好）<input type="range" id="wc" min="0" max="100" value="20"><b id="wcVal">20</b></label>
         <label>推理克制（越省 token 越好）<input type="range" id="wr" min="0" max="100" value="20"><b id="wrVal">20</b></label>
       </div>
-      <p class="weight-note">改权重，排行榜<b>实时重排</b>—— 同一个模型，你更在意"能算对"还是"又快又省"，排名就会不一样。这正是"默认分高 ≠ 用起来好"的现场。</p>
+      <p class="weight-note">改权重，排行榜<b>实时重排</b>—— 同一个模型，你更在意"能算对"还是"又快又省"，排名就会不一样。<b>默认分高 ≠ 用起来好。</b></p>
     </div>
 
     <div class="controls">
@@ -71,7 +91,7 @@
 
     <div class="controls sample-row">
       <button class="btn" id="btnSample">看真实案例：DeepSeek V4 Pro vs GLM 5.3 Flash</button>
-      <span class="note">不花钱 —— 直接看本仓库 630 次真实运行里，"实测 vs 大众印象"差在哪</span>
+      <span class="note">不花钱 —— 直接看本仓库 630 次真实运行的四维指标，拖权重看排名怎么变</span>
     </div>
 
     <div class="progress" id="scoreProgress" hidden>
@@ -88,12 +108,7 @@
         </tr></thead>
         <tbody id="leaderboard"></tbody>
       </table>
-      <p class="fine">综合分 = 各维度归一化后按上面的权重加权，满分 100。没数据的维度（比如离线机器人不上报 token）按中性 0.5 处理，不会硬判成最好或最差。</p>
-    </section>
-
-    <section class="result" id="scorePerception" hidden>
-      <h2>认知校准 <span class="result-sub">实测和大家印象对不上的地方</span></h2>
-      <div id="perceptionCards"></div>
+      <p class="fine">综合分 = 各维度"相对这一批里最优的比例"按上面的权重加权，满分 100。没数据的维度（比如离线机器人不上报 token）按中性 0.5 处理。</p>
     </section>
   </section>
 
@@ -164,11 +179,19 @@
       <div id="aftermathBody"></div>
       <p class="fine">口径提醒：结论只对"这一批题 + 这次配置"负责，不代表某个模型整体更强。</p>
     </section>
+  </section>
 
-    <section class="result" id="pkPerception" hidden>
-      <h2>认知校准 <span class="result-sub">实测和大家印象对不上的地方</span></h2>
-      <div id="pkPerceptionCards"></div>
-    </section>
+  <!-- ================= 关于 ================= -->
+  <section id="aboutView" class="view" hidden>
+    <div class="result about">
+      <h2>关于 AI PK</h2>
+      <div id="aboutBody"></div>
+      <div class="about-row">
+        <button class="btn" id="btnUpdate">检查更新</button>
+        <span class="note" id="updateResult"></span>
+      </div>
+      <p class="fine">此项目开源、免费（MIT）。它不给"绝对智力分"，也不说"模型 X 整体比 Y 强"—— 结论只对"这次配置 + 这批题"负责。</p>
+    </div>
   </section>
 </main>
 

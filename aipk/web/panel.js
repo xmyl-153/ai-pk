@@ -1,21 +1,22 @@
 /* AI PK · 模型对战台 前端逻辑
-   两种模式：
-   - 跑分模式（默认进页）：挑 N 个选手，同一批题各跑一遍，按你选的权重出排行榜；改权重实时重排。
-   - 比分模式：左右拖两个选手，PK 出胜方。
-   加权是"你心里的尺子"：默认分高 ≠ 用起来好，权重一变，排名就变。 */
+   三种页签：
+   - 跑分模式（默认）：挑 1~8 个选手，同一批题各跑一遍，按你选的权重出排行榜；改权重实时重排。
+   - 比分模式：左右拖两个选手 PK 出胜方。
+   - 关于：版本 / 检查更新 / 联系作者。
+   跑分是排队制：一次只跑一局，多提交的就排队等（避免一起压网关触发限流）。 */
 
 const $ = (s) => document.querySelector(s);
 
 const state = {
   mode: "score",
-  pool: [],                 // 所有可选选手 {key,name,kind,note,group}
-  scoreSel: new Set(),      // 跑分模式选中的 key
-  scoreModels: null,        // 最近一次跑分的每个模型指标（供实时重排）
+  pool: [],
+  scoreSel: new Set(),
+  scoreModels: null,
   weights: { q: .40, s: .20, c: .20, r: .20 },
-  perception: {},           // /api/perception
   left: null, right: null,
   running: false,
   timer: null,
+  aboutLoaded: false,
 };
 
 const PRESETS = {
@@ -25,10 +26,10 @@ const PRESETS = {
   "速度优先": { q: .35, s: .45, c: .10, r: .10 },
 };
 
-// 真实案例：本仓库 runs/20260925-132828（630 次真实运行）里这两个模型的四维指标。
-// 用来演示"实测 vs 大众印象"——不花钱就能看到认知校准卡长什么样。
+// 真实案例：本仓库 runs/20260925-132828（630 次真实运行）的两个模型四维指标。
+// 只展示测量数据本身，用来说明"权重一变、排名就变"。
 const SAMPLE = {
-  note: "示例数据来自本仓库 runs/20260925-132828（630 次真实运行，7 类任务、每模型 63 题）。想出自己的结论，挑真模型跑一遍。",
+  note: "示例数据来自本仓库 runs/20260925-132828（630 次真实运行，每模型 63 题）。想出自己的结论，挑真模型跑一遍。",
   models: [
     { key: "alibailian/deepseek-v4-pro", name: "DeepSeek V4 Pro", rate: .984, avg_ms: 39876, avg_tok: 7503, rea_ratio: .185, avg_turns: 1.6, solved: 62, total: 63 },
     { key: "jiyuanapi/glm-5.3-flash", name: "GLM 5.3 Flash", rate: 1.0, avg_ms: 58117, avg_tok: 6925, rea_ratio: .149, avg_turns: 1.5, solved: 63, total: 63 },
@@ -38,24 +39,21 @@ const SAMPLE = {
 /* ---------------- 小工具 ---------------- */
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
-function md(s) { return esc(s).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>"); }
 function fmtMs(ms) { return ms < 1000 ? Math.round(ms) + " ms" : (ms / 1000).toFixed(2) + " s"; }
 function fmtTok(v) { return v == null ? "—" : Math.round(v).toLocaleString(); }
 function fmtPct(v) { return v == null ? "—" : (v * 100).toFixed(1) + "%"; }
 
-/* 加权合成：每个维度用"相对这一批里最优的比例"归一化（最优=1.0，其余按比例），
-   没数据的维度给中性 0.5。比 min-max 更直观、且在模型很少时不会把差距放大成碾压。 */
+/* 加权合成：每个维度用"相对这一批里最优的比例"归一化（最优=1.0），没数据给中性 0.5 */
 function norm(models, field, higher) {
   const vals = models.map((m) => m[field]);
   const present = vals.filter((v) => v != null && isFinite(v));
   if (!present.length) return vals.map(() => 0.5);
-  if (higher) {                                   // 越大越好（质量）
+  if (higher) {
     const best = Math.max(...present);
     return vals.map((v) => (v == null || !isFinite(v) || best <= 0) ? 0.5 : v / best);
   }
-  const best = Math.min(...present);              // 越小越好（速度 / 成本 / 推理占比）
-  return vals.map((v) => (v == null || !isFinite(v) || v <= 0) ? 0.5
-                       : (best <= 0 ? 1.0 : best / v));
+  const best = Math.min(...present);
+  return vals.map((v) => (v == null || !isFinite(v) || v <= 0) ? 0.5 : (best <= 0 ? 1.0 : best / v));
 }
 function composite(models, w) {
   const Q = norm(models, "rate", true);
@@ -65,22 +63,9 @@ function composite(models, w) {
   return models.map((m, i) => ({ ...m, score: (w.q * Q[i] + w.s * S[i] + w.c * C[i] + w.r * R[i]) * 100 }));
 }
 
-function perceptionFor(key) {
-  const low = (key || "").toLowerCase();
-  for (const k in state.perception) {
-    const e = state.perception[k];
-    if (k === key || (e.match || []).some((m) => low.includes(m))) return { key: k, ...e };
-  }
-  return null;
-}
-
-/* ---------------- 选手池 ---------------- */
+/* ---------------- 启动 ---------------- */
 async function boot() {
-  const [st, per] = await Promise.all([
-    (await fetch("/api/state")).json(),
-    (await fetch("/api/perception")).json(),
-  ]);
-  state.perception = per;
+  const st = await (await fetch("/api/state")).json();
   state.pool = [
     ...(st.offline || []).map((m) => ({ ...m, group: "离线" })),
     ...(st.models || []).map((m) => ({ ...m, group: "真模型" })),
@@ -89,12 +74,13 @@ async function boot() {
   renderPkPool();
   const tag = $("#gatewayTag");
   if (st.usable) { tag.textContent = `已接 ${st.usable} 个真模型`; tag.classList.add("ok"); }
-  else { tag.textContent = "没接真模型 · 先用离线机器人玩"; tag.classList.add("warn"); }
+  else { tag.textContent = "没接真模型 · 点右上角接入"; tag.classList.add("warn"); }
   $("#scoreNote").textContent = st.note || "";
   wire();
   setMode("score");
 }
 
+/* ---------------- 选手池 ---------------- */
 function chipEl(m, { score }) {
   const el = document.createElement("div");
   el.className = "chip" + (score ? " score-chip" : "") + (state.scoreSel.has(m.key) ? " picked" : "");
@@ -106,13 +92,14 @@ function chipEl(m, { score }) {
   } else {
     el.draggable = true;
     el.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", m.key); e.dataTransfer.effectAllowed = "copy"; });
-    el.addEventListener("click", () => { state.picked = state.picked === m.key ? null : m.key;
+    el.addEventListener("click", () => {
+      state.picked = state.picked === m.key ? null : m.key;
       document.querySelectorAll("#pkPool .chip").forEach((c) => c.classList.remove("picked"));
-      if (state.picked) el.classList.add("picked"); });
+      if (state.picked) el.classList.add("picked");
+    });
   }
   return el;
 }
-
 function fillPool(elId, { score }) {
   const box = $(elId);
   box.innerHTML = "";
@@ -136,16 +123,42 @@ function toggleScoreSel(key) {
   refreshScoreBtn();
 }
 function refreshScoreBtn() {
-  $("#btnScore").disabled = !(state.scoreSel.size >= 2 && !state.running);
+  $("#btnScore").disabled = !(state.scoreSel.size >= 1 && !state.running);
 }
 
-/* ---------------- 模式切换 ---------------- */
+/* ---------------- 页签 ---------------- */
 function setMode(mode) {
   state.mode = mode;
   $("#scoreView").hidden = mode !== "score";
   $("#pkView").hidden = mode !== "pk";
+  $("#aboutView").hidden = mode !== "about";
   $("#tabScore").classList.toggle("active", mode === "score");
   $("#tabPk").classList.toggle("active", mode === "pk");
+  $("#tabAbout").classList.toggle("active", mode === "about");
+  if (mode === "about" && !state.aboutLoaded) loadAbout();
+}
+
+/* ---------------- 关于 / 更新 ---------------- */
+async function loadAbout() {
+  const a = await (await fetch("/api/about")).json();
+  state.aboutLoaded = true;
+  $("#aboutBody").innerHTML = `
+    <div class="about-grid">
+      <div><span class="k">版本</span><b>v${esc(a.version)}</b></div>
+      <div><span class="k">作者</span><b>${esc(a.author)}</b></div>
+      <div><span class="k">主页</span><a href="${esc(a.homepage)}" target="_blank" rel="noopener">${esc(a.homepage)}</a></div>
+      <div><span class="k">联系</span><a href="${esc(a.issues)}" target="_blank" rel="noopener">提 Issue / PR</a></div>
+    </div>
+    <p class="about-contact">${esc(a.contact)}</p>`;
+}
+async function checkUpdate() {
+  const el = $("#updateResult");
+  el.textContent = "检查中…";
+  const r = await (await fetch("/api/update")).json();
+  if (!r.ok) { el.textContent = r.note || "检查失败"; return; }
+  el.textContent = r.has_update
+    ? `发现新版本 v${r.latest}（当前 v${r.current}），git pull 更新。`
+    : `当前 v${r.current}，已是最新。`;
 }
 
 /* ---------------- 加权 ---------------- */
@@ -168,16 +181,15 @@ function applyPreset(name) {
   if (state.scoreModels) renderLeaderboard();
 }
 
-/* ---------------- 排行榜（跑分模式） ---------------- */
+/* ---------------- 排行榜 ---------------- */
 function renderLeaderboard() {
   if (!state.scoreModels) return;
   const rows = composite(state.scoreModels, state.weights).sort((a, b) => b.score - a.score);
-  const tb = $("#leaderboard");
-  tb.innerHTML = rows.map((m, i) => {
+  $("#leaderboard").innerHTML = rows.map((m, i) => {
     const bar = Math.max(3, Math.round(m.score));
-    return `<tr class="${i === 0 ? "top" : ""}">
+    return `<tr class="${i === 0 ? "lead" : ""}">
       <td class="rank">${i + 1}</td>
-      <td class="model">${esc(m.name)}${perceptionFor(m.key) ? ' <span class="pc" title="有认知校准说明">?</span>' : ""}</td>
+      <td class="model">${esc(m.name)}</td>
       <td class="score"><span class="scorebar"><i style="width:${bar}%"></i></span><b>${m.score.toFixed(1)}</b></td>
       <td>${(m.rate * 100).toFixed(1)}%（${m.solved}/${m.total}）</td>
       <td>${fmtMs(m.avg_ms)}</td>
@@ -188,38 +200,17 @@ function renderLeaderboard() {
   }).join("");
   $("#scoreResult").hidden = false;
 }
-
-function renderPerception(models, cardsId, sectionId) {
-  const cards = models.filter((m) => perceptionFor(m.key));
-  const sec = $(sectionId);
-  if (!cards.length) { sec.hidden = true; return; }
-  sec.hidden = false;
-  $(cardsId).innerHTML = cards.map((m) => {
-    const p = perceptionFor(m.key);
-    const src = (p.sources || []).map((s) => `<a href="${s[1]}" target="_blank" rel="noopener">${esc(s[0])}</a>`).join(" · ");
-    return `<div class="pcard">
-      <div class="pcard-head">${esc(m.name)}</div>
-      <p><b>大众印象：</b>${md(p.impression)}</p>
-      <p><b>本工具实测：</b>${md(p.measured)}</p>
-      <p><b>为什么对不上：</b>${md(p.why)}</p>
-      <p><b>本工具的回应：</b>${md(p.response)}</p>
-      ${src ? `<p class="psrc">出处：${src}</p>` : ""}
-    </div>`;
-  }).join("");
-}
-
-/* ---------------- 跑分模式：开一局 ---------------- */
 function showSample() {
   state.scoreModels = SAMPLE.models;
   renderLeaderboard();
-  renderPerception(SAMPLE.models, "#perceptionCards", "#scorePerception");
   $("#scoreNote").textContent = SAMPLE.note;
 }
 
+/* ---------------- 跑分（排队制） ---------------- */
 async function startScore() {
   state.running = true;
   refreshScoreBtn();
-  $("#scoreResult").hidden = true; $("#scorePerception").hidden = true;
+  $("#scoreResult").hidden = true;
   $("#scoreProgress").hidden = false; $("#scoreLog").textContent = ""; $("#scoreBar").style.width = "0%";
   const start = await (await fetch("/api/score", {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -227,13 +218,12 @@ async function startScore() {
   })).json();
   if (start.error) { finishScoreError(start.error); return; }
   pollRun(start.run_id, (r) => {
-    $("#scoreBar").style.width = (r.total ? Math.round(r.done / r.total * 100) : 0) + "%";
+    $("#scoreBar").style.width = (r.total ? Math.round((r.done || 0) / r.total * 100) : 0) + "%";
     $("#scoreLog").textContent = (r.log || []).join("\n");
     $("#scoreLog").scrollTop = $("#scoreLog").scrollHeight;
     if (r.status === "done") {
       state.scoreModels = r.result.models;
       renderLeaderboard();
-      renderPerception(r.result.models, "#perceptionCards", "#scorePerception");
       finishScore();
     }
     if (r.status === "error") finishScoreError(r.error);
@@ -288,12 +278,11 @@ function renderPkResult(r) {
   if (r.result.verdict === "right") $("#sideRight").classList.add("win");
   $("#aftermathBody").innerHTML = "<ul>" + r.result.bullets.map((b) => `<li>${b}</li>`).join("") + "</ul>";
   $("#aftermath").hidden = false;
-  renderPerception([left, right], "#pkPerceptionCards", "#pkPerception");
 }
 
 async function startPk() {
   state.running = true; refreshFight();
-  $("#aftermath").hidden = true; $("#verdict").hidden = true; $("#pkPerception").hidden = true;
+  $("#aftermath").hidden = true; $("#verdict").hidden = true;
   $("#progressBox").hidden = false; $("#log").textContent = ""; $("#barFill").style.width = "0%";
   $("#vs").classList.add("hot"); setTimeout(() => $("#vs").classList.remove("hot"), 520);
   const start = await (await fetch("/api/pk", {
@@ -302,7 +291,7 @@ async function startPk() {
   })).json();
   if (start.error) { state.running = false; refreshFight(); $("#pkNote").textContent = start.error; return; }
   pollRun(start.run_id, (r) => {
-    $("#barFill").style.width = (r.total ? Math.round(r.done / r.total * 100) : 0) + "%";
+    $("#barFill").style.width = (r.total ? Math.round((r.done || 0) / r.total * 100) : 0) + "%";
     $("#log").textContent = (r.log || []).join("\n");
     $("#log").scrollTop = $("#log").scrollHeight;
     if (r.status === "done") { renderPkResult(r); state.running = false; refreshFight(); $("#pkNote").textContent = "证据落在 " + r.result.out + "/"; }
@@ -310,24 +299,28 @@ async function startPk() {
   });
 }
 
-/* 轮询（两种模式共用，run_id 都在同一个 registry） */
+/* 轮询（跑分 / 比分共用同一个 run registry；queued → running → done） */
 function pollRun(runId, onTick) {
   if (state.timer) clearInterval(state.timer);
   state.timer = setInterval(async () => {
     const r = await (await fetch("/api/pk/" + runId)).json();
     onTick(r);
-    if (r.status !== "running") clearInterval(state.timer);
+    if (r.status !== "running" && r.status !== "queued") clearInterval(state.timer);
   }, 700);
 }
 
-/* ---------------- 事件绑定 ---------------- */
+/* ---------------- 事件 ---------------- */
 function wire() {
   $("#tabScore").addEventListener("click", () => setMode("score"));
   $("#tabPk").addEventListener("click", () => setMode("pk"));
+  $("#tabAbout").addEventListener("click", () => setMode("about"));
+  $("#btnConfig").addEventListener("click", () => { $("#configGuide").hidden = !$("#configGuide").hidden; });
+  $("#guideClose").addEventListener("click", () => { $("#configGuide").hidden = true; });
+  $("#btnUpdate").addEventListener("click", checkUpdate);
   $("#btnScore").addEventListener("click", startScore);
   $("#btnSample").addEventListener("click", showSample);
   document.querySelectorAll(".preset").forEach((b) => b.addEventListener("click", () => applyPreset(b.dataset.preset)));
-  ["wq", "ws", "wc", "wr"].forEach((id) => $(("#" + id)).addEventListener("input", () => {
+  ["wq", "ws", "wc", "wr"].forEach((id) => $("#" + id).addEventListener("input", () => {
     document.querySelectorAll(".preset").forEach((b) => b.classList.remove("active"));
     readWeights();
     if (state.scoreModels) renderLeaderboard();
