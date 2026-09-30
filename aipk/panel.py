@@ -17,8 +17,10 @@ import json
 import mimetypes
 import queue as _queue
 import socket
+import subprocess
 import threading
 import time
+import urllib.error
 import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -310,22 +312,71 @@ def _about() -> dict:
     }
 
 
-def _update() -> dict:
-    """尽力联网查一下有没有新版本；查不到就提示手动 git pull（不联网也能用）。"""
-    cur = __version__
+def _gh_json(path: str) -> Any:
+    req = urllib.request.Request(
+        "https://api.github.com" + path,
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "aipk-panel"})
+    with urllib.request.urlopen(req, timeout=6) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _local_head() -> str | None:
+    """当前 checkout 的提交 sha 前 7 位；不在 git 环境里就返回 None。"""
     try:
-        req = urllib.request.Request(
-            "https://api.github.com/repos/xmyl-153/ai-pk/releases/latest",
-            headers={"Accept": "application/vnd.github+json", "User-Agent": "aipk-panel"})
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        latest = str(data.get("tag_name") or "").lstrip("v")
-        return {"ok": True, "current": cur, "latest": latest or cur,
-                "has_update": bool(latest) and latest != cur,
-                "note": "" if (latest and latest != cur) else "已是最新。"}
+        out = subprocess.run(["git", "rev-parse", "HEAD"],
+                             cwd=str(Path(__file__).resolve().parent.parent),
+                             capture_output=True, timeout=5, text=True)
+        sha = (out.stdout or "").strip()
+        return sha[:7] if out.returncode == 0 and len(sha) >= 7 else None
+    except Exception:  # noqa: BLE001  没有 git 也算正常，只是比不了提交
+        return None
+
+
+def _update() -> dict:
+    """尽力联网查一下有没有新版本；三级回退：release 标签 → 任意 tag → 默认分支最新提交。
+
+    仓库没发过 release 时 `releases/latest` 会 404（旧版把这当成"联网失败"），
+    所以 404 要落到下一级；只有真连不上 GitHub 才报 ok=False。
+    """
+    cur = __version__
+    base = {"current": cur, "latest": None, "has_update": False}
+    try:
+        tag = ""
+        try:
+            tag = str(_gh_json("/repos/xmyl-153/ai-pk/releases/latest").get("tag_name") or "").lstrip("v")
+        except urllib.error.HTTPError as e:
+            if e.code != 404:  # 404 = 没发过 release，不是故障
+                raise
+        if not tag:
+            tags = _gh_json("/repos/xmyl-153/ai-pk/tags?per_page=1")
+            tag = str((tags[0].get("name") if tags else "") or "").lstrip("v")
+        commits = _gh_json("/repos/xmyl-153/ai-pk/commits?per_page=1")
+        first = commits[0] if commits else {}
+        remote_head = str(first.get("sha") or "")[:7]
+        remote_date = str(((first.get("commit") or {}).get("committer") or {}).get("date") or "")[:10]
+    except urllib.error.HTTPError as e:
+        return {**base, "ok": False,
+                "note": f"GitHub 接口返回 {e.code}（限流或地址变动）；要更新请手动 `git pull`。"}
     except Exception as e:  # noqa: BLE001  联网失败不该影响面板
-        return {"ok": False, "current": cur, "latest": None, "has_update": False,
-                "note": f"联网检查失败（{type(e).__name__}）；要更新请手动 `git pull`。"}
+        return {**base, "ok": False,
+                "note": f"连不上 GitHub（{type(e).__name__}，可能离线或被网络拦截）；要更新请手动 `git pull`。"}
+
+    if tag:
+        has = tag != cur
+        note = (f"发现新版本 v{tag}（当前 v{cur}），`git pull` 更新。" if has
+                else f"当前 v{cur} 与最新标签 v{tag} 一致，已是最新。")
+        return {**base, "ok": True, "latest": tag, "has_update": has, "note": note}
+    local_head = _local_head()
+    if remote_head and local_head and remote_head != local_head:
+        return {**base, "ok": True, "latest": cur, "has_update": True,
+                "note": f"远端还没打版本标签，但最新提交 {remote_head}（{remote_date}）与本地 {local_head} 不同；`git pull` 更新。"}
+    if remote_head and local_head:
+        return {**base, "ok": True, "latest": cur,
+                "note": f"本地提交与远端最新提交 {remote_head}（{remote_date}）一致，已是最新。"}
+    where = f"远端最新提交 {remote_head or '未知'}" + (f"（{remote_date}）" if remote_date else "")
+    return {**base, "ok": True, "latest": cur,
+            "note": f"远端还没发版本标签；{where}" + (f"，本地 {local_head}" if local_head else "")
+                    + "。要更新请 `git pull` 后对比。"}
 
 
 # ---------------------------------------------------------------- HTTP

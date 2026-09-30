@@ -88,6 +88,7 @@ async function boot() {
   ];
   renderScorePool();
   renderPkPool();
+  renderIdeas();
   const tag = $("#gatewayTag");
   if (st.usable) { tag.textContent = `已接 ${st.usable} 个真模型`; tag.classList.add("ok"); }
   else { tag.textContent = "没接真模型 · 点右上角接入"; tag.classList.add("warn"); }
@@ -100,6 +101,8 @@ async function boot() {
     const fixed = (sp.get("sample") || "").split(",").map((s) => s.trim()).filter(Boolean);
     showSample(fixed.length >= 2 ? fixed : null);
   }
+  const tab = sp.get("tab");
+  if (tab && ["score", "pk", "ideas", "about"].includes(tab)) setMode(tab);
 }
 
 /* ---------------- 选手池 ---------------- */
@@ -153,9 +156,11 @@ function setMode(mode) {
   state.mode = mode;
   $("#scoreView").hidden = mode !== "score";
   $("#pkView").hidden = mode !== "pk";
+  $("#ideasView").hidden = mode !== "ideas";
   $("#aboutView").hidden = mode !== "about";
   $("#tabScore").classList.toggle("active", mode === "score");
   $("#tabPk").classList.toggle("active", mode === "pk");
+  $("#tabIdeas").classList.toggle("active", mode === "ideas");
   $("#tabAbout").classList.toggle("active", mode === "about");
   if (mode === "about" && !state.aboutLoaded) loadAbout();
 }
@@ -177,10 +182,101 @@ async function checkUpdate() {
   const el = $("#updateResult");
   el.textContent = "检查中…";
   const r = await (await fetch("/api/update")).json();
-  if (!r.ok) { el.textContent = r.note || "检查失败"; return; }
-  el.textContent = r.has_update
-    ? `发现新版本 v${r.latest}（当前 v${r.current}），git pull 更新。`
-    : `当前 v${r.current}，已是最新。`;
+  el.textContent = r.note || (!r.ok ? "检查失败"
+    : (r.has_update ? `发现新版本 v${r.latest}（当前 v${r.current}），git pull 更新。`
+                    : `当前 v${r.current}，已是最新。`));
+}
+
+/* ---------------- 测试建议池 ----------------
+   每条：title 名字 / tags 主要摸什么 / prompt 可直接复制的提示词 /
+   look 看什么 / limit 为什么它当不了严谨测量。
+   这页不参与跑分：它负责"摸手感"，跑分模式负责"下结论"。 */
+const IDEAS = [
+  {
+    title: "鹈鹕骑自行车",
+    tags: ["空间构图", "网络名梗"],
+    prompt: "请你创建一个html，内容是SVG绘制一个鹈鹕骑自行车的画面",
+    look: ["要素齐不齐：鹈鹕的大嘴和喉囊、自行车的两个轮 / 车把 / 脚踏",
+           "关系对不对：是\"骑\"在车座上，不是并排站着",
+           "存成 .html 双击打开 —— 真的能渲染出来"],
+    limit: "网络名梗提示词，模型可能在训练数据里背过模板；画得好也许是默写，不是能力。",
+  },
+  {
+    title: "指向 4:20 的指针时钟",
+    tags: ["精确几何"],
+    prompt: "请你创建一个html，用SVG画一个指针式时钟，指针精确指向4点20分：分针指向4（120度）、时针在4和5之间（130度），不要用数字直接写时间",
+    look: ["分针 120°、时针 130°（很多模型会把时针画成正指 4）",
+           "时针 / 分针长短粗细可区分",
+           "刻度是 12 个，不是 10 个或 14 个"],
+    limit: "答案就是一道算术题；对了只说明它这次算对了，不代表几何能力整体强。",
+  },
+  {
+    title: "九尾狐，正好九条尾巴",
+    tags: ["计数", "指令跟随"],
+    prompt: "请你创建一个html，用SVG画一只九尾狐：要求正好九条尾巴，不多不少，且每条都连在身体上",
+    look: ["数尾巴：九条，不多不少",
+           "尾巴是\"长\"在身上，不是飘在旁边的独立图形",
+           "九条尾巴有没有糊成一团数不清"],
+    limit: "计数是不少模型的已知弱项；但单案例只说明\"这次踩没踩坑\"，不出分数。",
+  },
+  {
+    title: "猫钓鱼，倒影是鱼骨头",
+    tags: ["隐喻理解", "场景层次"],
+    prompt: "请你创建一个html，用SVG画一个场景：一只猫在河边钓鱼，水面里猫的倒影是猫自己，但钩上的鱼在水里的倒影是一副鱼骨头",
+    look: ["懂不懂\"倒影 ≠ 实物\"这个反差（题眼）",
+           "水面线分得清：岸上实景 / 水里倒影两层",
+           "钩上的鱼本体还是活鱼 —— 只有倒影是骨头"],
+    limit: "判分完全主观；你觉得它\"懂了隐喻\"，可能只是构图碰巧。",
+  },
+  {
+    title: "纯 CSS 讲囚徒困境",
+    tags: ["硬约束", "真能用"],
+    prompt: "请你创建一个html，用纯CSS（完全不用JavaScript）演示\"囚徒困境\"：两个囚犯各自选择\"坦白/抵赖\"（用checkbox hack实现点击），页面给出四种组合的判刑结果",
+    look: ["看源码搜 script：应该一个都没有",
+           "四种组合的结果齐全且自洽（如双抵赖各 1 年、双坦白各 5 年、一坦白一抵赖 0 年 / 10 年）",
+           "真的点得动：四种组合都能切换出来"],
+    limit: "\"不用 JS\"能机器验证，\"讲没讲清楚\"只能人眼看 —— 一半严谨一半主观。",
+  },
+  {
+    title: "一页诚实描述自己的网页",
+    tags: ["自指", "自信校准"],
+    prompt: "请你创建一个html，页面内容是对它自己源码的描述：至少三条可核对的量化陈述（例如总行数、某个字出现的次数、用了几种颜色），要求全部为真",
+    look: ["逐条核对：它说的行数 / 字数 / 颜色数跟源码对得上吗",
+           "模型常常非常自信地写出假的自我描述",
+           "有没有用\"大约\"\"左右\"把陈述糊过去"],
+    limit: "核对要你亲手数；它测的是\"敢不敢让自己被核对\"，不是知识量。",
+  },
+];
+
+function renderIdeas() {
+  $("#ideasList").innerHTML = IDEAS.map((d, i) => `
+    <div class="result idea-card">
+      <div class="idea-head">
+        <h2>${i + 1}. ${esc(d.title)}</h2>
+        <span class="idea-tags">${d.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</span>
+      </div>
+      <pre class="idea-prompt">${esc(d.prompt)}</pre>
+      <div class="idea-row">
+        <button class="mini" data-copy="${i}">复制提示词</button>
+        <span class="note">粘给任何会写代码的模型 / agent，把产物存成 .html 打开看</span>
+      </div>
+      <div class="idea-cols">
+        <div><span class="k">看什么</span><ul>${d.look.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>
+        <div><span class="k">局限</span><p>${esc(d.limit)}</p></div>
+      </div>
+    </div>`).join("");
+  document.querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", async () => {
+    const text = IDEAS[+b.dataset.copy].prompt;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      document.execCommand("copy"); ta.remove();
+    }
+    b.textContent = "已复制 ✓";
+    setTimeout(() => { b.textContent = "复制提示词"; }, 1500);
+  }));
 }
 
 /* ---------------- 加权 ---------------- */
@@ -342,6 +438,7 @@ function pollRun(runId, onTick) {
 function wire() {
   $("#tabScore").addEventListener("click", () => setMode("score"));
   $("#tabPk").addEventListener("click", () => setMode("pk"));
+  $("#tabIdeas").addEventListener("click", () => setMode("ideas"));
   $("#tabAbout").addEventListener("click", () => setMode("about"));
   $("#btnConfig").addEventListener("click", () => { $("#configGuide").hidden = !$("#configGuide").hidden; });
   $("#guideClose").addEventListener("click", () => { $("#configGuide").hidden = true; });

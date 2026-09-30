@@ -336,6 +336,10 @@ select {
 .tab.active .tab-sub { color: rgba(255, 255, 255, .85); }
 
 .view { animation: fade .25s ease; }
+@media (prefers-reduced-motion: reduce) {
+  .view { animation: none; }
+  .chip:hover { transform: none; }
+}
 @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 .pool-wrap h2 { margin: 4px 0 2px; }
@@ -422,3 +426,27 @@ select {
   .verdict { writing-mode: horizontal-tb; max-height: none; }
   .sliders { grid-template-columns: 1fr; }
 }
+
+/* ================= 测试建议池 ================= */
+.ideas-lead { margin: 0 0 12px; font-size: 13.5px; line-height: 1.8; color: var(--ink-dim); }
+.ideas-lead code { background: rgba(27, 33, 56, .08); padding: 1px 5px; border-radius: 5px; }
+.ideas-limits { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.ideas-limits > div { border: 1px solid var(--card-line); border-radius: 10px; padding: 10px 14px; background: rgba(255, 255, 255, .35); }
+.ideas-limits h3 { margin: 0 0 6px; font-size: 13px; }
+.ideas-limits ul { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.8; color: var(--ink-dim); }
+.idea-card { margin-top: 12px; }
+.idea-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.idea-head h2 { margin: 0; font-size: 15px; }
+.idea-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.idea-prompt {
+  margin: 10px 0 8px; padding: 10px 12px;
+  border-radius: 10px; border: 1px dashed rgba(99, 102, 241, .45);
+  background: rgba(99, 102, 241, .07);
+  font-size: 13px; line-height: 1.7; white-space: pre-wrap; word-break: break-all;
+}
+.idea-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.idea-row .mini { margin-left: 0; }
+.idea-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 10px; }
+.idea-cols .k { display: block; font-size: 11.5px; color: var(--ink-faint); margin-bottom: 4px; }
+.idea-cols ul { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.8; color: var(--ink-dim); }
+.idea-cols p { margin: 0; font-size: 12.5px; line-height: 1.8; color: var(--ink-dim); }

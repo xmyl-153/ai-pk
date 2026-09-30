@@ -48,6 +48,7 @@ roster:
   <div class="tabs">
     <button class="tab active" id="tabScore">跑分模式 <span class="tab-sub">多个模型出排行榜</span></button>
     <button class="tab" id="tabPk">比分模式 <span class="tab-sub">两个模型左右 PK</span></button>
+    <button class="tab" id="tabIdeas">测试建议池 <span class="tab-sub">不花钱的脑筋题 · 人眼判</span></button>
     <button class="tab" id="tabAbout">关于 <span class="tab-sub">版本 / 更新 / 联系</span></button>
   </div>
 
@@ -179,6 +180,34 @@ roster:
       <div id="aftermathBody"></div>
       <p class="fine">口径提醒：结论只对"这一批题 + 这次配置"负责，不代表某个模型整体更强。</p>
     </section>
+  </section>
+
+  <!-- ================= 测试建议池 ================= -->
+  <section id="ideasView" class="view" hidden>
+    <div class="result ideas-intro">
+      <h2>这页是干嘛的</h2>
+      <p class="ideas-lead">下面这些提示词都是"看一眼就有答案"的趣味测试 —— 复制给任何会写代码的模型 / agent，把产物存成 <code>.html</code> 打开看。它帮你快速摸一个模型的脾气，<b>但不参与本测试台的跑分</b>。</p>
+      <div class="ideas-limits">
+        <div>
+          <h3>本测试台（AI PK）能回答什么</h3>
+          <ul>
+            <li>同一批题、同一 seed、代码可验证：对不对、几秒、几 token、推理占多少；</li>
+            <li>可复算：原始证据落盘，任何人都能重算一遍结论；</li>
+            <li>局限：结论只对"这批题 + 这次配置"负责，测不了观感、创意、审美。</li>
+          </ul>
+        </div>
+        <div>
+          <h3>建议池趣味测试能回答什么</h3>
+          <ul>
+            <li>空间构图、隐喻理解、硬约束跟随这类"一眼观感"；</li>
+            <li>局限：单案例、人眼判、没有统计 —— 画得好一次 ≠ 能力强；</li>
+            <li>局限：名梗提示词（比如鹈鹕）可能早进训练数据，画得好也许是默写。</li>
+          </ul>
+        </div>
+      </div>
+      <p class="fine">所以：建议池用来"摸手感"，测试台用来"下结论"；两者都不代表模型的"整体智力"。有好玩的测试欢迎 PR 补充。</p>
+    </div>
+    <div id="ideasList"></div>
   </section>
 
   <!-- ================= 关于 ================= -->
