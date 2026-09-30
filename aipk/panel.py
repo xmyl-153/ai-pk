@@ -307,6 +307,7 @@ def _about() -> dict:
         "version": __version__,
         "author": "xmyl-153（星梦幽灵）",
         "homepage": "https://github.com/xmyl-153/ai-pk",
+        "blog": "https://xmyl-153.github.io/xingmengyouling-blog/",
         "issues": "https://github.com/xmyl-153/ai-pk/issues",
         "contact": "提 Issue / PR 是最快的联系方式；面板只在你本机跑，不会上传任何东西。",
     }

@@ -174,6 +174,7 @@ async function loadAbout() {
       <div><span class="k">版本</span><b>v${esc(a.version)}</b></div>
       <div><span class="k">作者</span><b>${esc(a.author)}</b></div>
       <div><span class="k">主页</span><a href="${esc(a.homepage)}" target="_blank" rel="noopener">${esc(a.homepage)}</a></div>
+      <div><span class="k">博客</span><a href="${esc(a.blog)}" target="_blank" rel="noopener">${esc(a.blog)}</a></div>
       <div><span class="k">联系</span><a href="${esc(a.issues)}" target="_blank" rel="noopener">提 Issue / PR</a></div>
     </div>
     <p class="about-contact">${esc(a.contact)}</p>`;
