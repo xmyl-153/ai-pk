@@ -26,15 +26,31 @@ const PRESETS = {
   "速度优先": { q: .35, s: .45, c: .10, r: .10 },
 };
 
-// 真实案例：本仓库 runs/20260925-132828（630 次真实运行）的两个模型四维指标。
-// 只展示测量数据本身，用来说明"权重一变、排名就变"。
+// 真实案例：本仓库 runs/20260925-132828（630 次真实运行 = 10 模型 × 63 题）按模型聚合的四维指标，
+// 聚合口径与 _summarize() 一致（infra_failure 不计入）。只展示测量数据本身，用来说明"权重一变、排名就变"。
+// 示例不固定点名任何一对模型：每次点「看真实案例」从池子里随机抽 2 个，再点一次换一对。
 const SAMPLE = {
-  note: "示例数据来自本仓库 runs/20260925-132828（630 次真实运行，每模型 63 题）。想出自己的结论，挑真模型跑一遍。",
-  models: [
-    { key: "alibailian/deepseek-v4-pro", name: "DeepSeek V4 Pro", rate: .984, avg_ms: 39876, avg_tok: 7503, rea_ratio: .185, avg_turns: 1.6, solved: 62, total: 63 },
-    { key: "jiyuanapi/glm-5.3-flash", name: "GLM 5.3 Flash", rate: 1.0, avg_ms: 58117, avg_tok: 6925, rea_ratio: .149, avg_turns: 1.5, solved: 63, total: 63 },
+  note: "示例数据来自本仓库 runs/20260925-132828（630 次真实运行，10 模型 × 63 题）。点「看真实案例」每次随机抽 2 个模型；想出自己的结论，挑真模型跑一遍。",
+  pool: [
+    { key: "alibailian/deepseek-v4-pro", name: "DeepSeek V4 Pro", rate: .984, avg_ms: 39876, avg_tok: 7503, rea_ratio: .185, avg_turns: 3.7, solved: 62, total: 63 },
+    { key: "jiyuanapi/qwen3.8-max", name: "Qwen3.8 Max", rate: 1.0, avg_ms: 43469, avg_tok: 8927, rea_ratio: .073, avg_turns: 4.5, solved: 63, total: 63 },
+    { key: "jiyuanapi/glm-5.3", name: "GLM-5.3", rate: .905, avg_ms: 56765, avg_tok: 7726, rea_ratio: .235, avg_turns: 4.1, solved: 57, total: 63 },
+    { key: "alibailian/kimi-k3", name: "Kimi K3", rate: 1.0, avg_ms: 41196, avg_tok: 3971, rea_ratio: .291, avg_turns: 3.8, solved: 63, total: 63 },
+    { key: "jiyuanapi/seed-2.1-pro", name: "Seed 2.1 Pro", rate: .905, avg_ms: 166263, avg_tok: 19432, rea_ratio: .394, avg_turns: 5.6, solved: 57, total: 63 },
+    { key: "jiyuanapi/longcat-2.0", name: "LongCat 2.0", rate: .921, avg_ms: 75879, avg_tok: 11767, rea_ratio: .201, avg_turns: 4.8, solved: 58, total: 63 },
+    { key: "zcode-api-key/glm-4.7", name: "GLM-4.7", rate: .937, avg_ms: 47574, avg_tok: 5890, rea_ratio: .149, avg_turns: 3.5, solved: 59, total: 63 },
+    { key: "jiyuanapi/deepseek-flash", name: "DeepSeek V4.1 (flash)", rate: .968, avg_ms: 23826, avg_tok: 8165, rea_ratio: .072, avg_turns: 4.5, solved: 61, total: 63 },
+    { key: "jiyuanapi/glm-5.3-flash", name: "GLM-5.3 Flash", rate: 1.0, avg_ms: 58117, avg_tok: 6925, rea_ratio: .149, avg_turns: 4.2, solved: 63, total: 63 },
+    { key: "alibailian/qwen3.8-flash", name: "Qwen3.8 Flash", rate: 1.0, avg_ms: 29283, avg_tok: 9342, rea_ratio: .111, avg_turns: 4.5, solved: 63, total: 63 },
   ],
 };
+/* 从示例池随机抽 2 个不同模型（无放回），示例不固定点名任何一对 */
+function drawSample() {
+  const pool = [...SAMPLE.pool];
+  const a = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
+  const b = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
+  return [a, b];
+}
 
 /* ---------------- 小工具 ---------------- */
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
@@ -78,6 +94,12 @@ async function boot() {
   $("#scoreNote").textContent = st.note || "";
   wire();
   setMode("score");
+  // 深链：/?sample 看随机抽的真实案例；/?sample=<key1>,<key2> 指定一对（分享 / 截图复现用）
+  const sp = new URLSearchParams(location.search);
+  if (sp.has("sample")) {
+    const fixed = (sp.get("sample") || "").split(",").map((s) => s.trim()).filter(Boolean);
+    showSample(fixed.length >= 2 ? fixed : null);
+  }
 }
 
 /* ---------------- 选手池 ---------------- */
@@ -200,10 +222,17 @@ function renderLeaderboard() {
   }).join("");
   $("#scoreResult").hidden = false;
 }
-function showSample() {
-  state.scoreModels = SAMPLE.models;
+function showSample(fixedKeys) {
+  let pair = null;
+  if (fixedKeys && fixedKeys.length >= 2) {
+    const a = SAMPLE.pool.find((m) => m.key === fixedKeys[0]);
+    const b = SAMPLE.pool.find((m) => m.key === fixedKeys[1]);
+    if (a && b && a !== b) pair = [a, b];
+  }
+  state.scoreModels = pair || drawSample();
   renderLeaderboard();
   $("#scoreNote").textContent = SAMPLE.note;
+  $("#scoreResult").scrollIntoView({ block: "end" });
 }
 
 /* ---------------- 跑分（排队制） ---------------- */
@@ -318,7 +347,7 @@ function wire() {
   $("#guideClose").addEventListener("click", () => { $("#configGuide").hidden = true; });
   $("#btnUpdate").addEventListener("click", checkUpdate);
   $("#btnScore").addEventListener("click", startScore);
-  $("#btnSample").addEventListener("click", showSample);
+  $("#btnSample").addEventListener("click", () => showSample());
   document.querySelectorAll(".preset").forEach((b) => b.addEventListener("click", () => applyPreset(b.dataset.preset)));
   ["wq", "ws", "wc", "wr"].forEach((id) => $("#" + id).addEventListener("input", () => {
     document.querySelectorAll(".preset").forEach((b) => b.classList.remove("active"));
