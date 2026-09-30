@@ -1,5 +1,7 @@
 <div align="center">
 
+<b>中文</b> | <a href="README_en.md">English</a>
+
 <img src="docs/images/panel-board.png" width="820" alt="跑分模式：加权排行榜（示例为随机抽取的两个模型）">
 
 # AI PK · 模型对战台
